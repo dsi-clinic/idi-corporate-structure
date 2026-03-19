@@ -1,0 +1,7 @@
+.jupyter
+.ipynb_checkpoints
+__pycache__
+*~
+*.egg-info
+.claude
+.venv

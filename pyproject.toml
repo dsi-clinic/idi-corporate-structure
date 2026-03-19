@@ -1,0 +1,14 @@
+[project]
+name = "idi-corporate-structure"
+version = "0.1.0"
+description = "Retrieves subsidiary information from the SEC"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1.42.70",
+    "requests>=2.32.5",
+    "smart-open>=7.5.1",
+    "tqdm>=4.67.3",
+    "urllib3>=2.6.3",
+    "watchtower>=3.4.0",
+]

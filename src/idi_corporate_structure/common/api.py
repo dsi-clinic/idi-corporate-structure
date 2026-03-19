@@ -2,6 +2,7 @@
 
 # Standard library imports
 import logging
+import time
 from abc import ABC, abstractmethod
 from functools import cached_property
 from typing import Any, Literal
@@ -262,11 +263,34 @@ class GeonamesApi(ApiClient):
 
 class SecClient(ApiClient):
 
-    def __init__(self):
-        """Initializes the SEC API."""
-        super().__init__()
+    SEC_HEADERS = { "User-Agent": "Nicole Tebaldi ntebaldi@uchicago.edu" }
+    SEC_URL = "https://www.sec.gov/Archives/edgar/data"
 
-    def query_endpoint(self, sec_url, headers={}):
-        return self._query_with_error_handling(
-            url=sec_url, headers=headers, method="get"
+    def __init__(self, rate_limit: float = 0.2):
+        """Initializes the SEC API.
+
+        Args:
+            rate_limit: How long to wait in between requests
+        """
+        super().__init__()
+        self._last_request = time.time()
+        self._rate_limit = rate_limit
+
+    def query_endpoint(self, sec_url):
+        """Query SEC API endpoint.
+
+        Args:
+            sec_url: URL to query
+        """
+        response = self._query_with_error_handling(
+            url=sec_url, headers=self.SEC_HEADERS, method="get"
         )
+        self._last_request = time.time()
+        return response
+
+    def rate_limit(self) -> None:
+        """Enforce rate limit between requests (SEC limit: 10 requests/second)."""
+        elapsed = time.time() - self._last_request
+        if elapsed < self._rate_limit:
+            time.sleep(self._rate_limit - elapsed)
+        self._last_request = time.time()

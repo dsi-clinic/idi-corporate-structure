@@ -64,9 +64,6 @@ class SubsidiaryPipeline(Pipeline):
     IS_DATE = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")
     TWENTYONE = re.compile("[^0-9]21")
 
-    SEC_HEADERS = { "User-Agent": "Nicole Tebaldi ntebaldi@uchicago.edu" }
-    SEC_URL = "https://www.sec.gov/Archives/edgar/data"
-
     def __init__(self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor):
         super().__init__(config, sec_client, extractor)
         self.failure_registry = FailureRegistry(
@@ -115,10 +112,10 @@ class SubsidiaryPipeline(Pipeline):
             form: String name of form
         """
         accession = accession_number.replace("-", "")
-        directory = f"{self.SEC_URL}/{cik}/{accession}/index.json"
+        directory = f"{self.sec_client.SEC_URL}/{cik}/{accession}/index.json"
 
         if primary_document != "" and primary_document.split(".")[-1].upper() in ("HTM", "HTML"):
-            primary = f"{self.SEC_URL}/{cik}/{accession}/{primary_document}"
+            primary = f"{self.sec_client.SEC_URL}/{cik}/{accession}/{primary_document}"
         else:
             primary = ""
 
@@ -178,7 +175,7 @@ class SubsidiaryPipeline(Pipeline):
             A list of Filing objects
         """
         filings = []
-        with open_zip(self.config.input_file, headers=self.SEC_HEADERS) as zf:
+        with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
             namelist = zf.namelist()
             self.logger.info("Total # of files to process: %d", len(namelist))
 
@@ -196,7 +193,37 @@ class SubsidiaryPipeline(Pipeline):
 
     def process(self, input_list: list[Filing]) -> list[Subsidiary]:
         """Process input filing list to retrieve subsidiary data."""
-        return []
+        subsidiaries = []
+
+        for filing in tqdm(input_list):
+            filename = f"form-directories/{filing.filing_date}_{filing.cik}_{filing.accession_number}.json"
+            if os.path.exists(filename):
+                self.stats.skipped_filings += 1
+                continue
+
+            directory_response = self.sec_client.query_endpoint(filing.directory)
+            if "directory" not in directory_response.get("data", {}).keys():
+                self.logger.error(
+                    "Filing: %s - %s - %s does not have a directory listing.",
+                     filing.cik, filing.accession_number, filing.filing_date
+                )
+                self.stats.failed_subsidiaries += 1
+                self.failure_registry.add(filing.cik, filename, failure_type=FailureType.NO_FILING_DIRECTORY)
+
+            self.sec_client.rate_limit()
+
+            directory_items = directory_response.get("data", {}).get("directory", {}).get("items", [])
+            accession = filing.accession_number.replace("-", "")
+            for item in directory_items:
+                name = item["name"].upper()
+                if (self.EX.search(name) and (name.startswith("21") or self.TWENTYONE.search(name))) or "SUB" in name:
+                    sec_url=f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
+                    item_response = self.sec_client.query_endpoint(sec_url=sec_url)
+                    self.sec_client.rate_limit()
+
+
+
+        return subsidiaries
 
     def save_output(self, processed_list: list[Subsidiary]) -> None:
         """Save subsidiary list output."""
@@ -220,10 +247,11 @@ if __name__ == "__main__":
     config = PipelineConfig(
         # input_file="https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip",
         input_file = "/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/input/submissions.zip",
-        failure_file= "/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/failures/failures.json"
+        failure_file= "/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/failures/failures.json",
+        rate_limit=0.2
     )
 
-    sec_client = SecClient()
+    sec_client = SecClient(config.rate_limit)
 
     extractor = GptExtractor()
 

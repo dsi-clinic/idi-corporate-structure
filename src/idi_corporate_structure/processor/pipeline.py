@@ -359,7 +359,7 @@ if __name__ == "__main__":
         # input_file="https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip",
         input_file = "/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/input/submissions.zip",
         failure_file= "/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/failures/failures.json",
-        rate_limit=0.1,
+        rate_limit=0.12,
         num_workers=10
     )
 

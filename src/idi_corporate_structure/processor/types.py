@@ -1,8 +1,9 @@
+"""Data types for the corporate structure pipeline."""
+
 # Standard application imports
 import pathlib
 import threading
 from dataclasses import dataclass
-
 
 _REMOTE_SCHEMES = ("s3://", "https://", "http://", "gs://")
 
@@ -13,6 +14,8 @@ def _is_local(path: str) -> bool:
 
 @dataclass
 class Filing:
+    """Represents a single SEC 10-K filing with its metadata and document URLs."""
+
     cik: str
     filing_date: str
     form_type: str
@@ -23,6 +26,8 @@ class Filing:
 
 @dataclass
 class PipelineConfig:
+    """Configuration for the subsidiary pipeline."""
+
     input_file: str
     failure_file: str
     failure_flush_every: int = 50
@@ -30,7 +35,7 @@ class PipelineConfig:
     num_workers: int = 10
 
     def __post_init__(self) -> None:
-        "Validate existence of local files."
+        """Validate existence of local files."""
         if _is_local(self.input_file) and not pathlib.Path(self.input_file).exists():
             raise FileNotFoundError(f"Input file not found: {self.input_file}")
         if _is_local(self.failure_file) and not pathlib.Path(self.failure_file).parent.exists():
@@ -41,6 +46,8 @@ class PipelineConfig:
 
 @dataclass
 class PipelineStats:
+    """Thread-safe counters tracking pipeline progress and failures."""
+
     total_filing: int = 0
     failed_filings: int = 0
     skipped_filings: int = 0
@@ -64,6 +71,8 @@ class PipelineStats:
 
 @dataclass
 class Subsidiary:
+    """A single subsidiary entity extracted from an Exhibit 21 document."""
+
     parent_cik: str
     name: str
     location: str

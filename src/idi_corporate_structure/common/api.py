@@ -109,7 +109,7 @@ class ApiClient(ABC):
         params: dict = None,
         headers: dict = None,
         method: Literal["get", "post"] = "get",
-        return_json: bool = True
+        return_json: bool = True,
     ) -> dict[str, Any]:
         """Query an endpoint with error handling.
 
@@ -119,6 +119,7 @@ class ApiClient(ABC):
             params: The parameters to pass to the API.
             headers: The headers to pass to the API.
             method: The method to use to query the API.
+            return_json: If True, parse response as JSON; otherwise return raw text.
 
         Returns:
             The data from the API.
@@ -269,11 +270,12 @@ class GeonamesApi(ApiClient):
 
 
 class SecClient(ApiClient):
+    """API client for the SEC EDGAR archive, with built-in rate limiting."""
 
-    SEC_HEADERS = { "User-Agent": "Nicole Tebaldi ntebaldi@uchicago.edu" }
+    SEC_HEADERS = {"User-Agent": "Nicole Tebaldi ntebaldi@uchicago.edu"}
     SEC_URL = "https://www.sec.gov/Archives/edgar/data"
 
-    def __init__(self, rate_limit: float = 0.2):
+    def __init__(self, rate_limit: float = 0.2) -> None:
         """Initializes the SEC API.
 
         Args:
@@ -283,11 +285,15 @@ class SecClient(ApiClient):
         self._last_request = time.time()
         self._rate_limit = rate_limit
 
-    def query_endpoint(self, sec_url, return_json: bool = True):
+    def query_endpoint(self, sec_url: str, return_json: bool = True) -> dict:
         """Query SEC API endpoint.
 
         Args:
-            sec_url: URL to query
+            sec_url: URL to query.
+            return_json: If True, parse response as JSON; otherwise return raw text.
+
+        Returns:
+            Response dict with status_code, url, and data keys.
         """
         response = self._query_with_error_handling(
             url=sec_url, headers=self.SEC_HEADERS, method="get", return_json=return_json

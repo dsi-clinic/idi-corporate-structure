@@ -1,3 +1,5 @@
+"""Pipeline for extracting subsidiary data from SEC 10-K Exhibit 21 filings."""
+
 # Standard application imports
 import json
 import queue
@@ -15,14 +17,25 @@ from idi_corporate_structure.common.failures import FailureRegistry
 from idi_corporate_structure.common.logs import get_logger
 from idi_corporate_structure.common.storage import open_zip
 from idi_corporate_structure.processor.extractor import GptExtractor
-from idi_corporate_structure.processor.failures import CorporateStructureFailureClassifier, FailureType
-from idi_corporate_structure.processor.types import Filing, PipelineConfig, PipelineStats, Subsidiary
+from idi_corporate_structure.processor.failures import (
+    CorporateStructureFailureClassifier,
+    FailureType,
+)
+from idi_corporate_structure.processor.types import (
+    Filing,
+    PipelineConfig,
+    PipelineStats,
+    Subsidiary,
+)
 
 
 class Pipeline(ABC):
     """Baseline class for processing piplines."""
 
-    def __init__(self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor) -> None:
+    def __init__(
+        self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
+    ) -> None:
+        """Initialize the pipeline with config, SEC client, and extractor."""
         self.config = config
         self.extractor = extractor
         self.logger = get_logger("Pipeline")
@@ -44,9 +57,9 @@ class Pipeline(ABC):
         """Saves processed items list."""
         ...
 
+    @abstractmethod
     def display_stats(self) -> None:
         """Display processing stats."""
-        pass
 
     def run(self) -> None:
         """Run the pipeline."""
@@ -55,25 +68,32 @@ class Pipeline(ABC):
 
         results = self.process(input_data)
         self.logger.info("Located %d result data items.", len(results))
-        for r in results: print(r)
+        for r in results:
+            print(r)
 
         self.save_output(results)
         self.display_stats()
 
 
 class SubsidiaryPipeline(Pipeline):
+    """Pipeline that fetches Exhibit 21 filings from SEC EDGAR and extracts subsidiary data."""
 
     EX = re.compile(r"\BEX")
     IS_10K = re.compile("10-?K")
     IS_DATE = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")
     TWENTYONE = re.compile("[^0-9]21")
 
-    def __init__(self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor):
+    _INPUT_SAMPLE_SIZE = 10  # TODO: Remove after done testing
+
+    def __init__(
+        self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
+    ) -> None:
+        """Initialize the subsidiary pipeline with failure registry."""
         super().__init__(config, sec_client, extractor)
         self.failure_registry = FailureRegistry(
             config.failure_file,
             classifier=CorporateStructureFailureClassifier(),
-            flush_every=config.failure_flush_every
+            flush_every=config.failure_flush_every,
         )
         self.rows = []
 
@@ -85,13 +105,15 @@ class SubsidiaryPipeline(Pipeline):
             filename: Name of file data was retrieved from
             cik: Identifier of file data was retrieved from
         """
-
         forms = data.get("filings", {}).get("recent", {}).get("form", [])
         accession_numbers = data.get("filings", {}).get("recent", {}).get("accessionNumber", [])
         primary_documents = data.get("filings", {}).get("recent", {}).get("primaryDocument", [])
         filing_dates = data.get("filings", {}).get("recent", {}).get("filingDate", [])
 
-        if len({len(forms), len(accession_numbers), len(primary_documents), len(filing_dates)}) != 1:
+        if (
+            len({len(forms), len(accession_numbers), len(primary_documents), len(filing_dates)})
+            != 1
+        ):
             self.logger.error("Filename: %s has forms with mismatched data lengths.", filename)
             self.stats.increment("failed_filings")
             self.failure_registry.add(cik, filename, failure_type=FailureType.MISMATCHED_LENGTHS)
@@ -105,7 +127,9 @@ class SubsidiaryPipeline(Pipeline):
 
         return zip(forms, accession_numbers, primary_documents, filing_dates)
 
-    def _create_filing(self, accession_number: str, primary_document: str, cik: str, filing_date: str, form: str) -> Filing:
+    def _create_filing(
+        self, accession_number: str, primary_document: str, cik: str, filing_date: str, form: str
+    ) -> Filing:
         """Create Filing object with form data.
 
         Args:
@@ -129,7 +153,7 @@ class SubsidiaryPipeline(Pipeline):
             form_type=form,
             accession_number=accession_number,
             directory=directory,
-            primary_document=primary
+            primary_document=primary,
         )
         return filing
 
@@ -139,14 +163,14 @@ class SubsidiaryPipeline(Pipeline):
         Parses: cik, date, form, accession number, directory, and primary document
 
         Args:
-            filename: The filename to parse data from
+            zf: Open ZipFile to read from.
+            filename: The filename to parse data from.
 
         Returns:
             List of Filing objects with form data
         """
         filings = []
         if filename.startswith("CIK") and filename.endswith(".json"):
-
             with zf.open(filename) as file:
                 data = json.load(file)
 
@@ -156,19 +180,23 @@ class SubsidiaryPipeline(Pipeline):
             if data_zip:
                 for form, accession_number, primary_document, filing_date in data_zip:
                     if self.IS_10K.match(form):
-                        filings.append(self._create_filing(
-                            accession_number=accession_number,
-                            primary_document=primary_document,
-                            cik=cik,
-                            filing_date=filing_date,
-                            form=form
-                        ))
+                        filings.append(
+                            self._create_filing(
+                                accession_number=accession_number,
+                                primary_document=primary_document,
+                                cik=cik,
+                                filing_date=filing_date,
+                                form=form,
+                            )
+                        )
                         self.stats.increment("total_filing")
 
                     else:
                         self.logger.debug("Filename: %s does not have a 10K form.", filename)
                         self.stats.increment("failed_filings")
-                        self.failure_registry.add(cik, filename, failure_type=FailureType.NO_10K_FILINGS)
+                        self.failure_registry.add(
+                            cik, filename, failure_type=FailureType.NO_10K_FILINGS
+                        )
 
         return filings
 
@@ -187,7 +215,7 @@ class SubsidiaryPipeline(Pipeline):
             for filename in tqdm(namelist):
                 filings.extend(self._parse_file(zf, filename))
                 count += 1
-                if count == 10:    # TODO: Remove after done testing
+                if count == self._INPUT_SAMPLE_SIZE:
                     break
 
         return filings
@@ -208,10 +236,14 @@ class SubsidiaryPipeline(Pipeline):
             except Exception as _:
                 self.logger.error(
                     "Error extracting subsidiaries from filing: %s - %s - %s",
-                    filing.cik, filing.accession_number, filing.filing_date
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
                 )
                 self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(filing.cik, filing.accession_number, FailureType.EXTRACTION_FAILED)
+                self.failure_registry.add(
+                    filing.cik, filing.accession_number, FailureType.EXTRACTION_FAILED
+                )
 
             finally:
                 work_queue.task_done()
@@ -229,7 +261,7 @@ class SubsidiaryPipeline(Pipeline):
             self.stats.increment("total_subsidiaries", len(result))
             results_queue.task_done()
 
-    def _fetch_directory(self, filing) -> list[dict]:
+    def _fetch_directory(self, filing: Filing) -> list[dict]:
         """Fetch directory data from the SEC.
 
         Args:
@@ -242,15 +274,19 @@ class SubsidiaryPipeline(Pipeline):
         if "directory" not in directory_response.get("data", {}).keys():
             self.logger.error(
                 "Filing: %s - %s - %s does not have a directory listing.",
-                    filing.cik, filing.accession_number, filing.filing_date
+                filing.cik,
+                filing.accession_number,
+                filing.filing_date,
             )
             self.stats.increment("failed_subsidiaries")
-            self.failure_registry.add(filing.cik, filing.accession_number, FailureType.NO_FILING_DIRECTORY)
+            self.failure_registry.add(
+                filing.cik, filing.accession_number, FailureType.NO_FILING_DIRECTORY
+            )
             return {}
         self.sec_client.rate_limit()
         return directory_response.get("data", {}).get("directory", {}).get("item", [])
 
-    def _fetch_exhibit_content(self, filing, item) -> dict:
+    def _fetch_exhibit_content(self, filing: Filing, item: dict) -> dict:
         """Fetch exhibit content from the SEC.
 
         Args:
@@ -264,9 +300,10 @@ class SubsidiaryPipeline(Pipeline):
         accession = filing.accession_number.replace("-", "")
 
         exhibit_content = {}
-        if (self.EX.search(name) and (name.startswith("21") or self.TWENTYONE.search(name))) or "SUB" in name:
-
-            sec_url=f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
+        if (
+            self.EX.search(name) and (name.startswith("21") or self.TWENTYONE.search(name))
+        ) or "SUB" in name:
+            sec_url = f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
             item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_json=False)
             if item_response:
                 exhibit_content = item_response
@@ -274,15 +311,20 @@ class SubsidiaryPipeline(Pipeline):
             else:
                 self.logger.error(
                     "Exhibit    : %s - %s - %s does not have content.",
-                        name, filing.cik, filing.accession_number, filing.filing_date
+                    name,
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
                 )
                 self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT)
+                self.failure_registry.add(
+                    filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT
+                )
 
             self.sec_client.rate_limit()
         return exhibit_content
 
-    def _fetch_exhibit(self, filing) -> list[str]:
+    def _fetch_exhibit(self, filing: Filing) -> list[str]:
         """Fetch exhibit data from the SEC.
 
         Args:
@@ -312,16 +354,18 @@ class SubsidiaryPipeline(Pipeline):
                 target=self._extract_worker,
                 args=(work_queue, result_queue),
                 daemon=True,
-                name=f"extract-worker-{i}"
-            ) for i in range(self.config.num_workers)
+                name=f"extract-worker-{i}",
+            )
+            for i in range(self.config.num_workers)
         ]
-        for worker in extract_workers: worker.start()
+        for worker in extract_workers:
+            worker.start()
 
         results_worker = threading.Thread(
             target=self._results_worker,
             args=(result_queue, subsidiaries),
             daemon=True,
-            name="results-worker"
+            name="results-worker",
         )
         results_worker.start()
 
@@ -338,11 +382,19 @@ class SubsidiaryPipeline(Pipeline):
 
     def save_output(self, processed_list: list[Subsidiary]) -> None:
         """Save subsidiary list output."""
-        pass
+
+    def display_stats(self) -> None:
+        """Log pipeline stats on completion."""
+        self.logger.info(
+            "Stats: total_filings=%d failed_filings=%d total_subsidiaries=%d failed_subsidiaries=%d",
+            self.stats.total_filing,
+            self.stats.failed_filings,
+            self.stats.total_subsidiaries,
+            self.stats.failed_subsidiaries,
+        )
 
     def run(self) -> None:
         """Run the pipeline, flushing any buffered failures on completion."""
-
         try:
             super().run()
         finally:
@@ -357,21 +409,17 @@ if __name__ == "__main__":
 
     config = PipelineConfig(
         # input_file="https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip",
-        input_file = "/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/input/submissions.zip",
-        failure_file= "/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/failures/failures.json",
+        input_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/input/submissions.zip",
+        failure_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/failures/failures.json",
         rate_limit=0.12,
-        num_workers=10
+        num_workers=10,
     )
 
     sec_client = SecClient(config.rate_limit)
 
     extractor = GptExtractor()
 
-    sub_pipeline = SubsidiaryPipeline(
-        config=config,
-        sec_client=sec_client,
-        extractor=extractor
-    )
+    sub_pipeline = SubsidiaryPipeline(config=config, sec_client=sec_client, extractor=extractor)
 
     sub_pipeline.run()
 

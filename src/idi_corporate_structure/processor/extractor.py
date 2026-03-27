@@ -1,3 +1,4 @@
+"""Extractors for parsing subsidiary data from SEC exhibit documents."""
 
 # Standard imports
 from abc import ABC, abstractmethod
@@ -24,14 +25,16 @@ class GptExtractor(Extractor):
 
         subsidiaries = []
         for document in documents:
-            subsidiaries.append(Subsidiary(
-                parent_cik=filing.cik,
-                name="",
-                location="",
-                filing_date=filing.filing_date,
-                form_type=filing.form_type,
-                accession_number=filing.accession_number,
-                exhibit_url=document["url"]
-            ))
+            subsidiaries.append(
+                Subsidiary(
+                    parent_cik=filing.cik,
+                    name="",
+                    location="",
+                    filing_date=filing.filing_date,
+                    form_type=filing.form_type,
+                    accession_number=filing.accession_number,
+                    exhibit_url=document["url"],
+                )
+            )
 
         return subsidiaries

@@ -39,6 +39,7 @@ class FailureClassifier(ABC):
 
         Args:
             response: API response dict with status_code and optional error.
+            **kwargs: Additional keyword arguments for subclass implementations.
 
         Returns:
             The classified failure type.
@@ -49,11 +50,14 @@ class FailureClassifier(ABC):
 class FailureRegistry:
     """Persists permanent failures to avoid retrying entities that will always fail."""
 
-    def __init__(self, file_path: str, classifier: FailureClassifier, flush_every: int = 10) -> None:
+    def __init__(
+        self, file_path: str, classifier: FailureClassifier, flush_every: int = 10
+    ) -> None:
         """Initialize the FailureRegistry.
 
         Args:
             file_path: Path to the JSON file for persistence.
+            classifier: Domain-specific failure classifier.
             flush_every: Number of new failures to buffer before writing to disk.
         """
         self.file_path = file_path
@@ -111,7 +115,7 @@ class FailureRegistry:
         Args:
             cik: The CIK of the filing entity.
             accession_number: The accession number of the filing.
-            reason: Optional reason for debugging.
+            failure_type: The classified failure type.
         """
         if self._classifier.is_retryable(failure_type):
             return

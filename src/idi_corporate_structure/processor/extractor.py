@@ -18,6 +18,20 @@ class Extractor(ABC):
 class GptExtractor(Extractor):
     """Extracts subsidiaries using GPT."""
 
-    def extract(self, documents: list, filing: Filing) -> list[Subsidiary]:
+    def extract(self, filing: Filing, documents: list[str]) -> list[Subsidiary]:
         """Use GPT to extract structured subsidiary data."""
-        pass
+        ## TODO: Implement GPT extraction
+
+        subsidiaries = []
+        for document in documents:
+            subsidiaries.append(Subsidiary(
+                parent_cik=filing.cik,
+                name="",
+                location="",
+                filing_date=filing.filing_date,
+                form_type=filing.form_type,
+                accession_number=filing.accession_number,
+                exhibit_url=document["url"]
+            ))
+
+        return subsidiaries

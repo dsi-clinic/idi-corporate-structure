@@ -1,7 +1,8 @@
 # Standard application imports
 import json
-import os
+import queue
 import re
+import threading
 import zipfile
 from abc import ABC, abstractmethod
 
@@ -51,8 +52,11 @@ class Pipeline(ABC):
         """Run the pipeline."""
         input_data = self.load_input()
         self.logger.info("Located %d input data items.", len(input_data))
+
         results = self.process(input_data)
         self.logger.info("Located %d result data items.", len(results))
+        for r in results: print(r)
+
         self.save_output(results)
         self.display_stats()
 
@@ -89,13 +93,13 @@ class SubsidiaryPipeline(Pipeline):
 
         if len({len(forms), len(accession_numbers), len(primary_documents), len(filing_dates)}) != 1:
             self.logger.error("Filename: %s has forms with mismatched data lengths.", filename)
-            self.stats.failed_filings += 1
+            self.stats.increment("failed_filings")
             self.failure_registry.add(cik, filename, failure_type=FailureType.MISMATCHED_LENGTHS)
             return None
 
         if not any([forms, accession_numbers, primary_documents, filing_dates]):
             self.logger.debug("Filename: %s has forms without data.", filename)
-            self.stats.failed_filings += 1
+            self.stats.increment("failed_filings")
             self.failure_registry.add(cik, filename, failure_type=FailureType.NO_FORM_DATA)
             return None
 
@@ -159,11 +163,11 @@ class SubsidiaryPipeline(Pipeline):
                             filing_date=filing_date,
                             form=form
                         ))
-                        self.stats.total_filing += 1
+                        self.stats.increment("total_filing")
 
                     else:
                         self.logger.debug("Filename: %s does not have a 10K form.", filename)
-                        self.stats.failed_filings += 1
+                        self.stats.increment("failed_filings")
                         self.failure_registry.add(cik, filename, failure_type=FailureType.NO_10K_FILINGS)
 
         return filings
@@ -183,45 +187,152 @@ class SubsidiaryPipeline(Pipeline):
             for filename in tqdm(namelist):
                 filings.extend(self._parse_file(zf, filename))
                 count += 1
-                if count == 500:
-                    # from dataclasses import asdict
-                    # print(json.dumps([asdict(f) for f in filings], indent=2))
-                    # print(len(filings))
+                if count == 10:    # TODO: Remove after done testing
                     break
 
         return filings
 
-    def process(self, input_list: list[Filing]) -> list[Subsidiary]:
-        """Process input filing list to retrieve subsidiary data."""
-        subsidiaries = []
+    def _extract_worker(self, work_queue: queue.Queue, results_queue: queue.Queue) -> None:
+        """Extract worker for the pipeline.
 
-        for filing in tqdm(input_list):
-            filename = f"form-directories/{filing.filing_date}_{filing.cik}_{filing.accession_number}.json"
-            if os.path.exists(filename):
-                self.stats.skipped_filings += 1
-                continue
+        Args:
+            work_queue: Queue of filings and exhibit contents
+            results_queue: Queue of results
+        """
+        while True:
+            filing, exhibit_contents = work_queue.get()
+            try:
+                subsidiaries = self.extractor.extract(filing, exhibit_contents)
+                results_queue.put(subsidiaries)
 
-            directory_response = self.sec_client.query_endpoint(filing.directory)
-            if "directory" not in directory_response.get("data", {}).keys():
+            except Exception as _:
                 self.logger.error(
-                    "Filing: %s - %s - %s does not have a directory listing.",
-                     filing.cik, filing.accession_number, filing.filing_date
+                    "Error extracting subsidiaries from filing: %s - %s - %s",
+                    filing.cik, filing.accession_number, filing.filing_date
                 )
-                self.stats.failed_subsidiaries += 1
-                self.failure_registry.add(filing.cik, filename, failure_type=FailureType.NO_FILING_DIRECTORY)
+                self.stats.increment("failed_subsidiaries")
+                self.failure_registry.add(filing.cik, filing.accession_number, FailureType.EXTRACTION_FAILED)
+
+            finally:
+                work_queue.task_done()
+
+    def _results_worker(self, results_queue: queue.Queue, subsidiaries: list[Subsidiary]) -> None:
+        """Results worker for the pipeline.
+
+        Args:
+            results_queue: Queue of results
+            subsidiaries: List of subsidiaries to add to
+        """
+        while True:
+            result = results_queue.get()
+            subsidiaries.extend(result)
+            self.stats.increment("total_subsidiaries", len(result))
+            results_queue.task_done()
+
+    def _fetch_directory(self, filing) -> list[dict]:
+        """Fetch directory data from the SEC.
+
+        Args:
+            filing: Filing object to fetch directory data from
+
+        Returns:
+            Directory response items
+        """
+        directory_response = self.sec_client.query_endpoint(filing.directory)
+        if "directory" not in directory_response.get("data", {}).keys():
+            self.logger.error(
+                "Filing: %s - %s - %s does not have a directory listing.",
+                    filing.cik, filing.accession_number, filing.filing_date
+            )
+            self.stats.increment("failed_subsidiaries")
+            self.failure_registry.add(filing.cik, filing.accession_number, FailureType.NO_FILING_DIRECTORY)
+            return {}
+        self.sec_client.rate_limit()
+        return directory_response.get("data", {}).get("directory", {}).get("item", [])
+
+    def _fetch_exhibit_content(self, filing, item) -> dict:
+        """Fetch exhibit content from the SEC.
+
+        Args:
+            filing: Filing object to fetch exhibit content from
+            item: Item object to fetch exhibit content from
+
+        Returns:
+            Dict of SEC response that containsexhibit content
+        """
+        name = item["name"].upper()
+        accession = filing.accession_number.replace("-", "")
+
+        exhibit_content = {}
+        if (self.EX.search(name) and (name.startswith("21") or self.TWENTYONE.search(name))) or "SUB" in name:
+
+            sec_url=f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
+            item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_json=False)
+            if item_response:
+                exhibit_content = item_response
+
+            else:
+                self.logger.error(
+                    "Exhibit    : %s - %s - %s does not have content.",
+                        name, filing.cik, filing.accession_number, filing.filing_date
+                )
+                self.stats.increment("failed_subsidiaries")
+                self.failure_registry.add(filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT)
 
             self.sec_client.rate_limit()
+        return exhibit_content
 
-            directory_items = directory_response.get("data", {}).get("directory", {}).get("items", [])
-            accession = filing.accession_number.replace("-", "")
-            for item in directory_items:
-                name = item["name"].upper()
-                if (self.EX.search(name) and (name.startswith("21") or self.TWENTYONE.search(name))) or "SUB" in name:
-                    sec_url=f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
-                    item_response = self.sec_client.query_endpoint(sec_url=sec_url)
-                    self.sec_client.rate_limit()
+    def _fetch_exhibit(self, filing) -> list[str]:
+        """Fetch exhibit data from the SEC.
 
+        Args:
+            filing: Filing object to fetch exhibit data from
 
+        Returns:
+            List of Strings of exhibit content
+        """
+        directory_items = self._fetch_directory(filing)
+        exhibit_content = []
+        for item in directory_items:
+            exhibits = self._fetch_exhibit_content(filing, item)
+            if exhibits:
+                exhibit_content.append(exhibits)
+        return exhibit_content
+
+    def process(self, input_list: list[Filing]) -> list[Subsidiary]:
+        """Process input filing list to retrieve subsidiary data."""
+        # Queues to store exhibit data and subsidiary data
+        work_queue = queue.Queue(maxsize=self.config.num_workers * 2)
+        result_queue = queue.Queue()
+        subsidiaries = []
+
+        # Start extract and results workers
+        extract_workers = [
+            threading.Thread(
+                target=self._extract_worker,
+                args=(work_queue, result_queue),
+                daemon=True,
+                name=f"extract-worker-{i}"
+            ) for i in range(self.config.num_workers)
+        ]
+        for worker in extract_workers: worker.start()
+
+        results_worker = threading.Thread(
+            target=self._results_worker,
+            args=(result_queue, subsidiaries),
+            daemon=True,
+            name="results-worker"
+        )
+        results_worker.start()
+
+        # SEC operations to fetch exhibit data
+        for filing in tqdm(input_list):
+            exhibit_contents = self._fetch_exhibit(filing)
+            work_queue.put((filing, exhibit_contents))
+
+        # Shutdown workers as all work is done
+        work_queue.join()
+        result_queue.join()
 
         return subsidiaries
 
@@ -248,7 +359,8 @@ if __name__ == "__main__":
         # input_file="https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip",
         input_file = "/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/input/submissions.zip",
         failure_file= "/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/failures/failures.json",
-        rate_limit=0.2
+        rate_limit=0.1,
+        num_workers=10
     )
 
     sec_client = SecClient(config.rate_limit)

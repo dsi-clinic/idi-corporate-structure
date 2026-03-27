@@ -3,11 +3,11 @@
 # Standard library imports
 import json
 import pathlib
+import threading
 from abc import ABC, abstractmethod
 from enum import StrEnum
 
 # Application imports
-from idi_corporate_structure.common.logs import get_logger
 from idi_corporate_structure.common.storage import load_json, save_json
 
 _MIN_ENTRY_LEN = 2
@@ -62,7 +62,7 @@ class FailureRegistry:
         self._pending = 0
         self._entries: set[tuple[str, str]] = set()
         self._reasons: dict[tuple[str, str], str] = {}
-        self.logger = get_logger("FailureRegistry")
+        self._lock = threading.Lock()
         self.load()
 
     def load(self) -> None:
@@ -116,16 +116,17 @@ class FailureRegistry:
         if self._classifier.is_retryable(failure_type):
             return
 
-        key = (cik, accession_number)
-        if key in self._entries:
-            return
+        with self._lock:
+            key = (cik, accession_number)
+            if key in self._entries:
+                return
 
-        self._entries.add(key)
-        self._reasons[key] = str(failure_type)
+            self._entries.add(key)
+            self._reasons[key] = str(failure_type)
 
-        self._pending += 1
-        if self._pending >= self._flush_every:
-            self.flush()
+            self._pending += 1
+            if self._pending >= self._flush_every:
+                self.flush()
 
     def flush(self) -> None:
         """Write all buffered failures to disk and reset the pending counter."""

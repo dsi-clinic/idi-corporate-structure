@@ -19,7 +19,7 @@ class FailureType(StrEnum):
     NO_FORM_DATA = "no_form_data"                # Filing arrays have no data
     NO_10K_FILINGS = "no_10k_filings"            # CIK exists but has no 10-K forms
     NO_FILING_DIRECTORY = "no_filing_directory"  # SEC queried filing but no directory listing was found
-    NO_EXHIBIT_21 = "no_exhibit_21"              # 10-K has no Exhibit 21 subsidiary list
+    NO_EXHIBIT_CONTENT = "no_exhibit_content"    # Exhibit has no content
     EXTRACTION_FAILED = "extraction_failed"      # GPT returned no structured data
     API_ERROR = "api_error"                      # HTTP failure fetching filing document
     RATE_LIMIT = "rate_limit"                    # SEC rate limit (429)
@@ -32,7 +32,8 @@ class CorporateStructureFailureClassifier(FailureClassifier):
         FailureType.MISMATCHED_LENGTHS,
         FailureType.NO_FORM_DATA,
         FailureType.NO_10K_FILINGS,
-        FailureType.NO_EXHIBIT_21,
+        FailureType.NO_EXHIBIT_CONTENT,
+        FailureType.NO_FILING_DIRECTORY,
     })
 
     @property

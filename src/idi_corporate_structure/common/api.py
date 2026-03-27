@@ -108,6 +108,7 @@ class ApiClient(ABC):
         params: dict = None,
         headers: dict = None,
         method: Literal["get", "post"] = "get",
+        return_json: bool = True
     ) -> dict[str, Any]:
         """Query an endpoint with error handling.
 
@@ -136,11 +137,16 @@ class ApiClient(ABC):
         response_data = {}
         if response is not None:
             try:
+                if return_json:
+                    r_data = response.json()
+                else:
+                    r_data = response.text
+
                 response_data.update(
                     {
                         "status_code": response.status_code,
                         "url": response.url,
-                        "data": response.json(),
+                        "data": r_data,
                     }
                 )
             except ValueError:
@@ -276,14 +282,14 @@ class SecClient(ApiClient):
         self._last_request = time.time()
         self._rate_limit = rate_limit
 
-    def query_endpoint(self, sec_url):
+    def query_endpoint(self, sec_url, return_json: bool = True):
         """Query SEC API endpoint.
 
         Args:
             sec_url: URL to query
         """
         response = self._query_with_error_handling(
-            url=sec_url, headers=self.SEC_HEADERS, method="get"
+            url=sec_url, headers=self.SEC_HEADERS, method="get", return_json=return_json
         )
         self._last_request = time.time()
         return response

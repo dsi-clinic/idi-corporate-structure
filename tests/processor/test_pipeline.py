@@ -2,6 +2,8 @@
 
 import io
 import json
+import queue
+import threading
 import zipfile
 from unittest.mock import MagicMock, patch
 
@@ -477,3 +479,130 @@ class TestProcess:
         pipeline.process(filings)
 
         assert pipeline.stats.total_subsidiaries == 2
+
+
+# ── _extract_worker ───────────────────────────────────────────────────────────
+
+
+class TestExtractWorker:
+    def _start_worker(self, pipeline, work_queue, results_queue):
+        threading.Thread(
+            target=pipeline._extract_worker,
+            args=(work_queue, results_queue),
+            daemon=True,
+        ).start()
+
+    def test_calls_extractor_with_filing_and_contents(self, pipeline, sample_filing):
+        exhibit = make_exhibit_response()
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, [exhibit]))
+        work_queue.join()
+
+        pipeline.extractor.extract.assert_called_once_with(sample_filing, [exhibit])
+
+    def test_puts_result_on_results_queue(self, pipeline, sample_filing):
+        subsidiary = Subsidiary(
+            parent_cik=sample_filing.cik, name="", location="",
+            filing_date=sample_filing.filing_date, form_type=sample_filing.form_type,
+            accession_number=sample_filing.accession_number, exhibit_url="",
+        )
+        pipeline.extractor.extract.return_value = [subsidiary]
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.join()
+
+        assert results_queue.get_nowait() == [subsidiary]
+
+    def test_marks_work_task_done_on_success(self, pipeline, sample_filing):
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, []))
+        work_queue.join()  # completes only if task_done() was called
+
+    def test_marks_work_task_done_on_exception(self, pipeline, sample_filing):
+        pipeline.extractor.extract.side_effect = RuntimeError("GPT error")
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.join()  # completes only if task_done() is called in finally
+
+    def test_increments_failed_subsidiaries_on_exception(self, pipeline, sample_filing):
+        pipeline.extractor.extract.side_effect = RuntimeError("GPT error")
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.join()
+
+        assert pipeline.stats.failed_subsidiaries == 1
+
+    def test_records_failure_on_exception(self, pipeline, sample_filing, mocker):
+        pipeline.extractor.extract.side_effect = RuntimeError("GPT error")
+        spy = mocker.spy(pipeline.failure_registry, "add")
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.join()
+
+        spy.assert_called_once_with(
+            sample_filing.cik, sample_filing.accession_number, FailureType.EXTRACTION_FAILED
+        )
+
+
+# ── _results_worker ───────────────────────────────────────────────────────────
+
+
+class TestResultsWorker:
+    def _make_subsidiary(self, filing: Filing) -> Subsidiary:
+        return Subsidiary(
+            parent_cik=filing.cik, name="Sub Inc", location="Delaware",
+            filing_date=filing.filing_date, form_type=filing.form_type,
+            accession_number=filing.accession_number, exhibit_url="",
+        )
+
+    def _start_worker(self, pipeline, results_queue, subsidiaries):
+        threading.Thread(
+            target=pipeline._results_worker,
+            args=(results_queue, subsidiaries),
+            daemon=True,
+        ).start()
+
+    def test_extends_subsidiaries_list(self, pipeline, sample_filing):
+        subsidiary = self._make_subsidiary(sample_filing)
+        results_queue = queue.Queue()
+        subsidiaries = []
+        self._start_worker(pipeline, results_queue, subsidiaries)
+
+        results_queue.put([subsidiary])
+        results_queue.join()
+
+        assert subsidiaries == [subsidiary]
+
+    def test_increments_total_subsidiaries(self, pipeline, sample_filing):
+        batch = [self._make_subsidiary(sample_filing) for _ in range(3)]
+        results_queue = queue.Queue()
+        subsidiaries = []
+        self._start_worker(pipeline, results_queue, subsidiaries)
+
+        results_queue.put(batch)
+        results_queue.join()
+
+        assert pipeline.stats.total_subsidiaries == 3
+
+    def test_marks_results_task_done(self, pipeline):
+        results_queue = queue.Queue()
+        self._start_worker(pipeline, results_queue, [])
+
+        results_queue.put([])
+        results_queue.join()  # completes only if task_done() was called

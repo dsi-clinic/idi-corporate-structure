@@ -1,6 +1,7 @@
 """Pipeline for extracting subsidiary data from SEC 10-K Exhibit 21 filings."""
 
 # Standard application imports
+import io
 import json
 import queue
 import re
@@ -9,6 +10,7 @@ import zipfile
 from abc import ABC, abstractmethod
 
 # Third party imports
+import pdfplumber
 from tqdm import tqdm
 
 # Application imports
@@ -84,6 +86,7 @@ class SubsidiaryPipeline(Pipeline):
     TWENTYONE = re.compile("[^0-9]21")
 
     _INPUT_SAMPLE_SIZE = 10  # TODO: Remove after done testing
+    _SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
     def __init__(
         self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
@@ -286,52 +289,112 @@ class SubsidiaryPipeline(Pipeline):
         self.sec_client.rate_limit()
         return directory_response.get("data", {}).get("directory", {}).get("item", [])
 
+    def _fetch_pdf_content(self, filing: Filing, item: dict, sec_url: str) -> dict:
+        """Fetch PDF content from the SEC.
+
+        Args:
+            filing: Filing object to fetch PDF content from
+            item: Item object to fetch PDF content from
+            sec_url: URL of the PDF file
+
+        Returns:
+            Dict with 'url' and 'data' keys
+        """
+        self.logger.warning(
+            "PDF exhibit found: %s / %s", filing.cik, item["name"]
+        )
+        item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_bytes=True)
+        exhibit_content = {}
+        if item_response.get("data"):
+            try:
+                with pdfplumber.open(io.BytesIO(item_response["data"])) as pdf:
+                    text = "\n\n".join(
+                        page.extract_text() or "" for page in pdf.pages
+                    )
+                exhibit_content = {"url": sec_url, "data": text}
+            except Exception:
+                self.logger.error("Failed to extract PDF content: %s", sec_url)
+                self.stats.increment("failed_subsidiaries")
+                self.failure_registry.add(
+                    filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT
+                )
+        return exhibit_content
+
+    def _fetch_other_content(self, name: str, filing: Filing, sec_url: str) -> dict:
+        """Fetch other content from the SEC including HTM, HTML, and TXT files.
+
+        Args:
+            name: Name of the item
+            filing: Filing object to fetch other content from
+            sec_url: URL of the other content
+
+        Returns:
+            Dict with 'url' and 'data' keys
+        """
+        item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_json=False)
+        if item_response.get("data"):
+            exhibit_content = {"url": sec_url, "data": item_response["data"]}
+        else:
+            exhibit_content = {}
+            self.logger.error(
+                "Exhibit %s - %s - %s does not have content.",
+                name,
+                filing.cik,
+                filing.accession_number,
+            )
+            self.stats.increment("failed_subsidiaries")
+            self.failure_registry.add(
+                filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT
+            )
+        return exhibit_content
+
     def _fetch_exhibit_content(self, filing: Filing, item: dict) -> dict:
         """Fetch exhibit content from the SEC.
+
+        Supports HTM, HTML, TXT, and PDF files. PDFs are extracted via pdfplumber.
+        Unsupported file types are skipped. PDF instances are logged as warnings
+        since they are rare and may require manual review.
 
         Args:
             filing: Filing object to fetch exhibit content from
             item: Item object to fetch exhibit content from
 
         Returns:
-            Dict of SEC response that containsexhibit content
+            Dict with 'url' and 'data' keys, or empty dict if not an exhibit 21 file
+            or the file type is unsupported.
         """
         name = item["name"].upper()
         accession = filing.accession_number.replace("-", "")
 
-        exhibit_content = {}
-        if (
-            self.EX.search(name) and (name.startswith("21") or self.TWENTYONE.search(name))
-        ) or "SUB" in name:
-            sec_url = f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
-            item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_json=False)
-            if item_response:
-                exhibit_content = item_response
+        if not (
+            (self.EX.search(name) and (name.startswith("21") or self.TWENTYONE.search(name)))
+            or "SUB" in name
+        ):
+            return {}
 
-            else:
-                self.logger.error(
-                    "Exhibit    : %s - %s - %s does not have content.",
-                    name,
-                    filing.cik,
-                    filing.accession_number,
-                    filing.filing_date,
-                )
-                self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(
-                    filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT
-                )
+        ext = item["name"].rsplit(".", 1)[-1].upper() if "." in item["name"] else ""
+        if ext not in self._SUPPORTED_EXHIBIT_EXTENSIONS:
+            self.logger.warning("Unsupported exhibit extension: %s", ext)
+            return {}
 
-            self.sec_client.rate_limit()
+        sec_url = f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
+
+        if ext == "PDF":
+            exhibit_content = self._fetch_pdf_content(filing, item, sec_url)
+        else:
+            exhibit_content = self._fetch_other_content(name, filing, sec_url)
+
+        self.sec_client.rate_limit()
         return exhibit_content
 
-    def _fetch_exhibit(self, filing: Filing) -> list[str]:
+    def _fetch_exhibit(self, filing: Filing) -> list[dict]:
         """Fetch exhibit data from the SEC.
 
         Args:
             filing: Filing object to fetch exhibit data from
 
         Returns:
-            List of Strings of exhibit content
+            List of dicts with 'url' and 'data' keys
         """
         directory_items = self._fetch_directory(filing)
         exhibit_content = []
@@ -369,10 +432,11 @@ class SubsidiaryPipeline(Pipeline):
         )
         results_worker.start()
 
-        # SEC operations to fetch exhibit data
+        # SEC operations to fetch exhibit data — one task per document
         for filing in tqdm(input_list):
             exhibit_contents = self._fetch_exhibit(filing)
-            work_queue.put((filing, exhibit_contents))
+            for exhibit_content in exhibit_contents:
+                work_queue.put((filing, exhibit_content))
 
         # Shutdown workers as all work is done
         work_queue.join()

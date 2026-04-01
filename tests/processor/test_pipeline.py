@@ -306,7 +306,8 @@ class TestFetchExhibitContent:
 
         result = pipeline._fetch_exhibit_content(sample_filing, item)
 
-        assert result["status_code"] == 200
+        assert result["url"] is not None
+        assert result["data"] == make_exhibit_response()["data"]
         pipeline.sec_client.query_endpoint.assert_called_once()
 
     def test_fetches_exhibit_named_21_prefix(self, pipeline, sample_filing):
@@ -325,11 +326,17 @@ class TestFetchExhibitContent:
         assert result == {}
         pipeline.sec_client.query_endpoint.assert_not_called()
 
+    def test_skips_unsupported_file_type(self, pipeline, sample_filing):
+        item = {"name": "d12345ex21.xml", "type": "text.gif"}
+
+        result = pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert result == {}
+        pipeline.sec_client.query_endpoint.assert_not_called()
+
     def test_returns_empty_when_no_content_returned(self, pipeline, sample_filing):
-        # Use a filename that matches the exhibit regex so query_endpoint is called,
-        # then return an empty/falsy response to trigger the no-content failure path.
         item = {"name": "d12345ex21.htm", "type": "text.gif"}
-        pipeline.sec_client.query_endpoint.return_value = {}  # falsy → no content
+        pipeline.sec_client.query_endpoint.return_value = {}  # no data key
 
         result = pipeline._fetch_exhibit_content(sample_filing, item)
 
@@ -364,6 +371,53 @@ class TestFetchExhibitContent:
         assert "d12345ex21.htm" in called_url
         assert "-" not in called_url.split("/")[-2]  # accession number has no dashes
 
+    def test_fetches_pdf_exhibit_and_extracts_text(self, pipeline, sample_filing, mocker):
+        item = {"name": "d12345ex21.pdf", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = {"data": b"%PDF content"}
+
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "Subsidiary A — Delaware"
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = lambda s: s
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_pdf.pages = [mock_page]
+        mocker.patch("idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf)
+
+        result = pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert result["data"] == "Subsidiary A — Delaware"
+        assert "d12345ex21.pdf" in result["url"]
+
+    def test_logs_warning_for_pdf_exhibit(self, pipeline, sample_filing, mocker):
+        item = {"name": "d12345ex21.pdf", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = {"data": b"%PDF content"}
+
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "text"
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = lambda s: s
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_pdf.pages = [mock_page]
+        mocker.patch("idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf)
+
+        mock_warn = mocker.patch.object(pipeline.logger, "warning")
+        pipeline._fetch_exhibit_content(sample_filing, item)
+
+        mock_warn.assert_called_once()
+
+    def test_records_failure_on_pdf_extraction_error(self, pipeline, sample_filing, mocker):
+        item = {"name": "d12345ex21.pdf", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = {"data": b"%PDF content"}
+        mocker.patch(
+            "idi_corporate_structure.processor.pipeline.pdfplumber.open",
+            side_effect=Exception("corrupt PDF"),
+        )
+
+        result = pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert result == {}
+        assert pipeline.stats.failed_subsidiaries == 1
+
 
 # ── _fetch_exhibit ────────────────────────────────────────────────────────────
 
@@ -386,7 +440,7 @@ class TestFetchExhibit:
         result = pipeline._fetch_exhibit(sample_filing)
 
         assert len(result) == 1
-        assert result[0]["status_code"] == 200
+        assert result[0]["url"] is not None
 
     def test_returns_empty_list_when_directory_empty(self, pipeline, sample_filing, mocker):
         mocker.patch.object(pipeline, "_fetch_directory", return_value=[])
@@ -506,10 +560,10 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [exhibit]))
+        work_queue.put((sample_filing, exhibit))
         work_queue.join()
 
-        pipeline.extractor.extract.assert_called_once_with(sample_filing, [exhibit])
+        pipeline.extractor.extract.assert_called_once_with(sample_filing, exhibit)
 
     def test_puts_result_on_results_queue(self, pipeline, sample_filing):
         subsidiary = Subsidiary(
@@ -526,7 +580,7 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()
 
         assert results_queue.get_nowait() == [subsidiary]
@@ -535,7 +589,7 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, []))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()  # completes only if task_done() was called
 
     def test_marks_work_task_done_on_exception(self, pipeline, sample_filing):
@@ -544,7 +598,7 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()  # completes only if task_done() is called in finally
 
     def test_increments_failed_subsidiaries_on_exception(self, pipeline, sample_filing):
@@ -553,7 +607,7 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()
 
         assert pipeline.stats.failed_subsidiaries == 1
@@ -565,7 +619,7 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()
 
         spy.assert_called_once_with(

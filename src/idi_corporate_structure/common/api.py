@@ -110,6 +110,7 @@ class ApiClient(ABC):
         headers: dict = None,
         method: Literal["get", "post"] = "get",
         return_json: bool = True,
+        return_bytes: bool = False,
     ) -> dict[str, Any]:
         """Query an endpoint with error handling.
 
@@ -120,6 +121,7 @@ class ApiClient(ABC):
             headers: The headers to pass to the API.
             method: The method to use to query the API.
             return_json: If True, parse response as JSON; otherwise return raw text.
+            return_bytes: If True, return raw response bytes (overrides return_json).
 
         Returns:
             The data from the API.
@@ -139,7 +141,9 @@ class ApiClient(ABC):
         response_data = {}
         if response is not None:
             try:
-                if return_json:
+                if return_bytes:
+                    r_data = response.content
+                elif return_json:
                     r_data = response.json()
                 else:
                     r_data = response.text
@@ -285,18 +289,25 @@ class SecClient(ApiClient):
         self._last_request = time.time()
         self._rate_limit = rate_limit
 
-    def query_endpoint(self, sec_url: str, return_json: bool = True) -> dict:
+    def query_endpoint(
+        self, sec_url: str, return_json: bool = True, return_bytes: bool = False
+    ) -> dict:
         """Query SEC API endpoint.
 
         Args:
             sec_url: URL to query.
             return_json: If True, parse response as JSON; otherwise return raw text.
+            return_bytes: If True, return raw response bytes (overrides return_json).
 
         Returns:
             Response dict with status_code, url, and data keys.
         """
         response = self._query_with_error_handling(
-            url=sec_url, headers=self.SEC_HEADERS, method="get", return_json=return_json
+            url=sec_url,
+            headers=self.SEC_HEADERS,
+            method="get",
+            return_json=return_json,
+            return_bytes=return_bytes,
         )
         self._last_request = time.time()
         return response

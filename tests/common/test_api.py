@@ -3,13 +3,14 @@
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
 import requests
 
 from idi_corporate_structure.common.api import SecClient
 
 
 class TestSecClientQueryEndpoint:
+    """Tests for SecClient.query_endpoint()."""
+
     def test_returns_json_by_default(self):
         client = SecClient(rate_limit=0.0)
         mock_response = MagicMock()
@@ -76,6 +77,8 @@ class TestSecClientQueryEndpoint:
 
 
 class TestSecClientRateLimit:
+    """Tests for SecClient.rate_limit()."""
+
     def test_sleeps_when_not_enough_time_elapsed(self):
         client = SecClient(rate_limit=0.2)
         client._last_request = time.time()  # just now

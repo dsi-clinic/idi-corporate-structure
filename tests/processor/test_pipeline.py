@@ -5,21 +5,18 @@ import json
 import queue
 import threading
 import zipfile
-from unittest.mock import MagicMock, patch
-
-import pytest
-
-from tests.conftest import make_cik_json, make_directory_response, make_exhibit_response
+from unittest.mock import MagicMock
 
 from idi_corporate_structure.processor.failures import FailureType
-from idi_corporate_structure.processor.pipeline import SubsidiaryPipeline
 from idi_corporate_structure.processor.types import Filing, Subsidiary
-
+from tests.conftest import make_cik_json, make_directory_response, make_exhibit_response
 
 # ── _zip_file_data ────────────────────────────────────────────────────────────
 
 
 class TestZipFileData:
+    """Tests for SubsidiaryPipeline._zip_file_data()."""
+
     def test_returns_zip_for_valid_equal_length_data(self, pipeline):
         data = make_cik_json(
             forms=["10-K", "10-Q"],
@@ -71,6 +68,8 @@ class TestZipFileData:
 
 
 class TestCreateFiling:
+    """Tests for SubsidiaryPipeline._create_filing()."""
+
     def test_builds_directory_url(self, pipeline):
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
@@ -143,6 +142,8 @@ class TestCreateFiling:
 
 
 class TestParseFile:
+    """Tests for SubsidiaryPipeline._parse_file()."""
+
     def _make_zip_with_cik(self, cik_filename: str, payload: dict) -> MagicMock:
         """Return a mock ZipFile whose open() yields a BytesIO of the JSON payload."""
         raw = json.dumps(payload).encode()
@@ -240,6 +241,8 @@ class TestParseFile:
 
 
 class TestFetchDirectory:
+    """Tests for SubsidiaryPipeline._fetch_directory()."""
+
     def test_returns_items_on_success(self, pipeline, sample_filing):
         items = [
             {"name": "ex21.htm", "type": "text.gif"},
@@ -292,6 +295,8 @@ class TestFetchDirectory:
 
 
 class TestFetchExhibitContent:
+    """Tests for SubsidiaryPipeline._fetch_exhibit_content()."""
+
     def test_fetches_exhibit_21_by_name(self, pipeline, sample_filing):
         # The regex is r"\BEX" — EX must NOT be at a word boundary (i.e. must
         # be preceded by a word character).  "d12345ex21.htm" → "D12345EX21.HTM"
@@ -364,10 +369,12 @@ class TestFetchExhibitContent:
 
 
 class TestFetchExhibit:
+    """Tests for SubsidiaryPipeline._fetch_exhibit()."""
+
     def test_returns_only_non_empty_contents(self, pipeline, sample_filing, mocker):
         directory_items = [
-            {"name": "ex21.htm", "type": "text.gif"},     # matches → has content
-            {"name": "primarydoc.htm", "type": "text.gif"}, # no match → skipped
+            {"name": "ex21.htm", "type": "text.gif"},  # matches → has content
+            {"name": "primarydoc.htm", "type": "text.gif"},  # no match → skipped
         ]
         mocker.patch.object(pipeline, "_fetch_directory", return_value=directory_items)
         mocker.patch.object(
@@ -402,6 +409,8 @@ class TestFetchExhibit:
 
 
 class TestProcess:
+    """Tests for SubsidiaryPipeline.process()."""
+
     def _make_filing(self, n: int) -> Filing:
         return Filing(
             cik=f"CIK{n:010d}",
@@ -428,9 +437,7 @@ class TestProcess:
         exhibit_content = [make_exhibit_response()]
 
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=exhibit_content)
-        pipeline.extractor.extract.side_effect = [
-            [self._make_subsidiary(f.cik)] for f in filings
-        ]
+        pipeline.extractor.extract.side_effect = [[self._make_subsidiary(f.cik)] for f in filings]
 
         results = pipeline.process(filings)
 
@@ -485,6 +492,8 @@ class TestProcess:
 
 
 class TestExtractWorker:
+    """Tests for SubsidiaryPipeline._extract_worker()."""
+
     def _start_worker(self, pipeline, work_queue, results_queue):
         threading.Thread(
             target=pipeline._extract_worker,
@@ -504,9 +513,13 @@ class TestExtractWorker:
 
     def test_puts_result_on_results_queue(self, pipeline, sample_filing):
         subsidiary = Subsidiary(
-            parent_cik=sample_filing.cik, name="", location="",
-            filing_date=sample_filing.filing_date, form_type=sample_filing.form_type,
-            accession_number=sample_filing.accession_number, exhibit_url="",
+            parent_cik=sample_filing.cik,
+            name="",
+            location="",
+            filing_date=sample_filing.filing_date,
+            form_type=sample_filing.form_type,
+            accession_number=sample_filing.accession_number,
+            exhibit_url="",
         )
         pipeline.extractor.extract.return_value = [subsidiary]
 
@@ -564,11 +577,17 @@ class TestExtractWorker:
 
 
 class TestResultsWorker:
+    """Tests for SubsidiaryPipeline._results_worker()."""
+
     def _make_subsidiary(self, filing: Filing) -> Subsidiary:
         return Subsidiary(
-            parent_cik=filing.cik, name="Sub Inc", location="Delaware",
-            filing_date=filing.filing_date, form_type=filing.form_type,
-            accession_number=filing.accession_number, exhibit_url="",
+            parent_cik=filing.cik,
+            name="Sub Inc",
+            location="Delaware",
+            filing_date=filing.filing_date,
+            form_type=filing.form_type,
+            accession_number=filing.accession_number,
+            exhibit_url="",
         )
 
     def _start_worker(self, pipeline, results_queue, subsidiaries):

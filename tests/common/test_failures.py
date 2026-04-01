@@ -3,19 +3,17 @@
 import json
 import threading
 
-import pytest
-
-from idi_corporate_structure.common.failures import FailureClassifier, FailureRegistry
+from idi_corporate_structure.common.failures import FailureRegistry
 from idi_corporate_structure.processor.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def make_registry(tmp_path, flush_every: int = 10) -> FailureRegistry:
+    """Build a FailureRegistry backed by a temp file."""
     failure_file = str(tmp_path / "failures.json")
     return FailureRegistry(
         file_path=failure_file,
@@ -28,6 +26,8 @@ def make_registry(tmp_path, flush_every: int = 10) -> FailureRegistry:
 
 
 class TestFailureRegistryAdd:
+    """Tests for FailureRegistry.add()."""
+
     def test_non_retryable_failure_is_added(self, tmp_path):
         registry = make_registry(tmp_path)
         registry.add("0001234567", "0001234567-24-000001", FailureType.MISMATCHED_LENGTHS)
@@ -76,6 +76,8 @@ class TestFailureRegistryAdd:
 
 
 class TestFailureRegistryPersistence:
+    """Tests for FailureRegistry load/save persistence."""
+
     def test_flush_writes_entries_to_disk(self, tmp_path):
         registry = make_registry(tmp_path)
         registry.add("0001234567", "0001234567-24-000001", FailureType.MISMATCHED_LENGTHS)
@@ -142,6 +144,8 @@ class TestFailureRegistryPersistence:
 
 
 class TestFailureRegistryThreadSafety:
+    """Tests for FailureRegistry concurrent access."""
+
     def test_concurrent_adds_do_not_corrupt_entries(self, tmp_path):
         """Multiple threads adding distinct entries should all be recorded."""
         registry = make_registry(tmp_path, flush_every=1000)

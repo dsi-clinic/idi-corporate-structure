@@ -10,10 +10,13 @@ from idi_corporate_structure.processor.failures import (
 
 @pytest.fixture
 def classifier() -> CorporateStructureFailureClassifier:
+    """Return a CorporateStructureFailureClassifier instance."""
     return CorporateStructureFailureClassifier()
 
 
 class TestCorporateStructureFailureClassifier:
+    """Tests for CorporateStructureFailureClassifier.classify_from_response()."""
+
     def test_classify_rate_limit_response(self, classifier):
         response = {"status_code": 429}
         assert classifier.classify_from_response(response) == FailureType.RATE_LIMIT
@@ -42,20 +45,28 @@ class TestCorporateStructureFailureClassifier:
 
 
 class TestIsRetryable:
-    @pytest.mark.parametrize("failure_type", [
-        FailureType.MISMATCHED_LENGTHS,
-        FailureType.NO_FORM_DATA,
-        FailureType.NO_10K_FILINGS,
-        FailureType.NO_FILING_DIRECTORY,
-        FailureType.NO_EXHIBIT_CONTENT,
-    ])
+    """Tests for CorporateStructureFailureClassifier.is_retryable()."""
+
+    @pytest.mark.parametrize(
+        "failure_type",
+        [
+            FailureType.MISMATCHED_LENGTHS,
+            FailureType.NO_FORM_DATA,
+            FailureType.NO_10K_FILINGS,
+            FailureType.NO_FILING_DIRECTORY,
+            FailureType.NO_EXHIBIT_CONTENT,
+        ],
+    )
     def test_non_retryable_types(self, classifier, failure_type):
         assert not classifier.is_retryable(failure_type)
 
-    @pytest.mark.parametrize("failure_type", [
-        FailureType.EXTRACTION_FAILED,
-        FailureType.API_ERROR,
-        FailureType.RATE_LIMIT,
-    ])
+    @pytest.mark.parametrize(
+        "failure_type",
+        [
+            FailureType.EXTRACTION_FAILED,
+            FailureType.API_ERROR,
+            FailureType.RATE_LIMIT,
+        ],
+    )
     def test_retryable_types(self, classifier, failure_type):
         assert classifier.is_retryable(failure_type)

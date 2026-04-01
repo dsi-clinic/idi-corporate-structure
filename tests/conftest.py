@@ -10,7 +10,6 @@ from idi_corporate_structure.processor.extractor import GptExtractor
 from idi_corporate_structure.processor.pipeline import SubsidiaryPipeline
 from idi_corporate_structure.processor.types import Filing, PipelineConfig
 
-
 # ── Data helpers ──────────────────────────────────────────────────────────────
 
 

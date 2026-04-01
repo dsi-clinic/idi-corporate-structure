@@ -14,6 +14,8 @@ from idi_corporate_structure.processor.types import (
 
 
 class TestPipelineStats:
+    """Tests for PipelineStats thread-safe counters."""
+
     def test_increment_default_by_one(self):
         stats = PipelineStats()
         stats.increment("total_filing")
@@ -62,6 +64,8 @@ class TestPipelineStats:
 
 
 class TestPipelineConfig:
+    """Tests for PipelineConfig validation."""
+
     def test_valid_config_local_files(self, tmp_path):
         input_zip = tmp_path / "submissions.zip"
         with zipfile.ZipFile(input_zip, "w"):
@@ -116,6 +120,8 @@ class TestPipelineConfig:
 
 
 class TestFilingDataclass:
+    """Tests for the Filing dataclass."""
+
     def test_filing_fields(self, sample_filing):
         assert sample_filing.cik == "0000320193"
         assert sample_filing.form_type == "10-K"
@@ -142,6 +148,8 @@ class TestFilingDataclass:
 
 
 class TestSubsidiaryDataclass:
+    """Tests for the Subsidiary dataclass."""
+
     def test_subsidiary_fields(self):
         sub = Subsidiary(
             parent_cik="0000320193",

@@ -1,8 +1,10 @@
 """Tests for common.storage — load_json, save_json, open_zip."""
 
+import contextlib
 import io
 import json
 import zipfile
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -10,6 +12,8 @@ from idi_corporate_structure.common.storage import load_json, open_zip, save_jso
 
 
 class TestLoadJson:
+    """Tests for load_json()."""
+
     def test_loads_dict_from_local_file(self, tmp_path):
         data = {"key": "value", "number": 42}
         f = tmp_path / "data.json"
@@ -42,6 +46,8 @@ class TestLoadJson:
 
 
 class TestSaveJson:
+    """Tests for save_json()."""
+
     def test_writes_dict_to_local_file(self, tmp_path):
         data = {"cik": "0001234567", "name": "ACME Corp"}
         f = tmp_path / "output.json"
@@ -78,6 +84,8 @@ class TestSaveJson:
 
 
 class TestOpenZip:
+    """Tests for open_zip()."""
+
     def test_opens_local_zip_and_yields_zipfile(self, tmp_path):
         # Create a real zip with one JSON file
         zip_path = tmp_path / "test.zip"
@@ -118,11 +126,10 @@ class TestOpenZip:
 
         # Verify the headers are forwarded — we just check smart_open was called
         # with transport_params containing the headers
-        try:
+        # zip read may fail on the mock — we only care about the call args
+        with contextlib.suppress(Exception):
             with open_zip(str(zip_path), headers=headers):
                 pass
-        except Exception:
-            pass  # zip read may fail on the mock — we only care about the call args
 
         mock_open.assert_called_once_with(
             str(zip_path), "rb", transport_params={"headers": headers}
@@ -141,13 +148,8 @@ class TestOpenZip:
         mock_open.return_value.__enter__ = lambda s: mock_file
         mock_open.return_value.__exit__ = MagicMock(return_value=False)
 
-        try:
+        with contextlib.suppress(Exception):
             with open_zip(str(zip_path)):
                 pass
-        except Exception:
-            pass
 
         mock_open.assert_called_once_with(str(zip_path), "rb", transport_params={})
-
-
-from unittest.mock import MagicMock

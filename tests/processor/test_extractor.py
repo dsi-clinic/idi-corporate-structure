@@ -1,20 +1,22 @@
 """Tests for processor.extractor — GptExtractor."""
 
-import pytest
-
-from tests.conftest import make_exhibit_response
 from idi_corporate_structure.processor.extractor import GptExtractor
 from idi_corporate_structure.processor.types import Subsidiary
+from tests.conftest import make_exhibit_response
 
 
 class TestGptExtractor:
+    """Tests for GptExtractor.extract() stub behavior."""
+
     def test_returns_empty_list_for_no_documents(self, sample_filing):
         extractor = GptExtractor()
         assert extractor.extract(sample_filing, []) == []
 
     def test_returns_one_subsidiary_per_document(self, sample_filing):
         extractor = GptExtractor()
-        result = extractor.extract(sample_filing, [make_exhibit_response(), make_exhibit_response()])
+        result = extractor.extract(
+            sample_filing, [make_exhibit_response(), make_exhibit_response()]
+        )
         assert len(result) == 2
         assert all(isinstance(s, Subsidiary) for s in result)
 

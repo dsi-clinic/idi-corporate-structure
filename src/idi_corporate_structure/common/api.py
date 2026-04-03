@@ -1,8 +1,10 @@
 """Provides API utilities for use across the application."""
 
 # Standard library imports
+import contextlib
 import json
 import logging
+import threading
 import time
 from abc import ABC, abstractmethod
 from functools import cached_property
@@ -26,16 +28,41 @@ class ApiClient(ABC):
     RETRY_STATUS_FORCELIST: list[int] = [429, 500, 502, 503, 504]
     USER_AGENT: str = "idi-company-info"
 
-    def __init__(self, api_key: str = "", max_retries: int = DEFAULT_MAX_RETRIES) -> None:
+    def __init__(
+        self,
+        api_key: str = "",
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        rate_limit: float | None = None,
+    ) -> None:
         """Initialize the ApiClient.
 
         Args:
             api_key: The API key.
             max_retries: The maximum number of retries.
+            rate_limit: Minimum seconds between requests. None disables rate limiting.
         """
         self.api_key: str = api_key
         self.max_retries: int = max_retries if max_retries is not None else self.DEFAULT_MAX_RETRIES
         self.logger: logging.Logger = get_logger("ApiClient")
+        self._rate_limit = rate_limit
+        self._last_request = time.time()
+        self._lock: threading.Lock | contextlib.AbstractContextManager = (
+            threading.Lock() if rate_limit is not None else contextlib.nullcontext()
+        )
+
+    def rate_limit(self) -> None:
+        """Enforce rate limit between requests.
+
+        No-op when rate_limit was not set at construction time.
+        Thread-safe: serializes callers when rate_limit is configured.
+        """
+        if self._rate_limit is None:
+            return
+        with self._lock:
+            elapsed = time.time() - self._last_request
+            if elapsed < self._rate_limit:
+                time.sleep(self._rate_limit - elapsed)
+            self._last_request = time.time()
 
     @cached_property
     def session(self) -> requests.Session:
@@ -290,9 +317,7 @@ class SecClient(ApiClient):
         Args:
             rate_limit: How long to wait in between requests
         """
-        super().__init__()
-        self._last_request = time.time()
-        self._rate_limit = rate_limit
+        super().__init__(rate_limit=rate_limit)
 
     def query_endpoint(
         self, sec_url: str, return_json: bool = True, return_bytes: bool = False
@@ -307,22 +332,13 @@ class SecClient(ApiClient):
         Returns:
             Response dict with status_code, url, and data keys.
         """
-        response = self._query_with_error_handling(
+        return self._query_with_error_handling(
             url=sec_url,
             headers=self.SEC_HEADERS,
             method="get",
             return_json=return_json,
             return_bytes=return_bytes,
         )
-        self._last_request = time.time()
-        return response
-
-    def rate_limit(self) -> None:
-        """Enforce rate limit between requests (SEC limit: 10 requests/second)."""
-        elapsed = time.time() - self._last_request
-        if elapsed < self._rate_limit:
-            time.sleep(self._rate_limit - elapsed)
-        self._last_request = time.time()
 
 
 class OpenAiClient(ApiClient):
@@ -330,13 +346,14 @@ class OpenAiClient(ApiClient):
 
     OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, rate_limit: float = 0.5) -> None:
         """Initializes the OpenAI API.
 
         Args:
             api_key: The API key.
+            rate_limit: Minimum seconds between requests.
         """
-        super().__init__(api_key=api_key)
+        super().__init__(api_key=api_key, rate_limit=rate_limit)
 
     def query_endpoint(
         self,

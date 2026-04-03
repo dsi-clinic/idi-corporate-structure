@@ -59,6 +59,14 @@ class TqdmLoggingHandler(logging.Handler):
     """Logging handler that writes via tqdm.write() to avoid disrupting progress bars."""
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Emit a log record.
+
+        Args:
+            record: The log record to emit.
+
+        Raises:
+            Exception: If an error occurs while emitting the log record.
+        """
         try:
             tqdm.tqdm.write(self.format(record))
         except Exception:

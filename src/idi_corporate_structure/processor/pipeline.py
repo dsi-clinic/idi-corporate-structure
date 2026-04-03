@@ -131,34 +131,43 @@ class SubsidiaryPipeline(Pipeline):
         return zip(forms, accession_numbers, primary_documents, filing_dates)
 
     def _create_filing(
-        self, accession_number: str, primary_document: str, cik: str, filing_date: str, form: str
+        self,
+        accession_number: str,
+        primary_document: str,
+        filing_date: str,
+        form: str,
+        company_data: dict,
     ) -> Filing:
         """Create Filing object with form data.
 
         Args:
             accession_number: String taken from form data
             primary_document: String document URL from form data
-            cik: String CIK identifier
             filing_date: String date of filing
             form: String name of form
+            company_data: Dictionary with company data from SEC submissions JSON
+
+        Returns:
+            Filing object with form data
         """
         accession = accession_number.replace("-", "")
-        directory = f"{self.sec_client.SEC_URL}/{cik}/{accession}/index.json"
+        directory = f"{self.sec_client.SEC_URL}/{company_data["cik"]}/{accession}/index.json"
 
         if primary_document != "" and primary_document.split(".")[-1].upper() in ("HTM", "HTML"):
-            primary = f"{self.sec_client.SEC_URL}/{cik}/{accession}/{primary_document}"
+            primary = f"{self.sec_client.SEC_URL}/{company_data["cik"]}/{accession}/{primary_document}"
         else:
             primary = ""
 
-        filing = Filing(
-            cik=cik,
+        return Filing(
+            cik=company_data["cik"],
             filing_date=filing_date,
             form_type=form,
             accession_number=accession_number,
             directory=directory,
             primary_document=primary,
+            company_name=company_data["name"],
+            location=company_data["location"],
         )
-        return filing
 
     def _parse_file(self, zf: zipfile.ZipFile, filename: str) -> list[Filing]:
         """Parse file contents and save as a row in the rows list.
@@ -177,19 +186,19 @@ class SubsidiaryPipeline(Pipeline):
             with zf.open(filename) as file:
                 data = json.load(file)
 
-            cik = filename[3:-5]
-            data_zip = self._zip_file_data(data, filename, cik)
+            company_data = { "cik": data.get("cik", ""), "name": data.get("name", ""), "location": data.get("stateOfIncorporation", "") }
+            filings_zip = self._zip_file_data(data, filename, company_data["cik"])
 
-            if data_zip:
-                for form, accession_number, primary_document, filing_date in data_zip:
+            if filings_zip:
+                for form, accession_number, primary_document, filing_date in filings_zip:
                     if self.IS_10K.match(form):
                         filings.append(
                             self._create_filing(
                                 accession_number=accession_number,
                                 primary_document=primary_document,
-                                cik=cik,
                                 filing_date=filing_date,
                                 form=form,
+                                company_data=company_data,
                             )
                         )
                         self.stats.increment("total_filing")
@@ -198,7 +207,7 @@ class SubsidiaryPipeline(Pipeline):
                         self.logger.debug("Filename: %s does not have a 10K form.", filename)
                         self.stats.increment("failed_filings")
                         self.failure_registry.add(
-                            cik, filename, failure_type=FailureType.NO_10K_FILINGS
+                            company_data["cik"], filename, failure_type=FailureType.NO_10K_FILINGS
                         )
 
         return filings

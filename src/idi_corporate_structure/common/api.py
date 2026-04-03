@@ -1,6 +1,7 @@
 """Provides API utilities for use across the application."""
 
 # Standard library imports
+import json
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -318,3 +319,47 @@ class SecClient(ApiClient):
         if elapsed < self._rate_limit:
             time.sleep(self._rate_limit - elapsed)
         self._last_request = time.time()
+
+class OpenAiClient(ApiClient):
+    """API client for the OpenAI API."""
+
+    OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+
+    def __init__(self, api_key: str) -> None:
+        """Initializes the OpenAI API.
+
+        Args:
+            api_key: The API key.
+        """
+        super().__init__(api_key=api_key)
+
+    def query_endpoint(
+        self,
+        data: str | dict = None,
+        return_json: bool = True,
+    ) -> dict:
+        """Query OpenAI API endpoint.
+
+        Args:
+            data: The data to post to the API.
+            return_json: If True, parse response as JSON; otherwise return raw text.
+
+        Returns:
+            Response dict with status_code, url, and data keys.
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+
+        if isinstance(data, dict):
+            data = json.dumps(data)
+
+        response = self._query_with_error_handling(
+            url=self.OPENAI_API_URL,
+            headers=headers,
+            method="post",
+            data=data,
+            return_json=return_json,
+        )
+        return response

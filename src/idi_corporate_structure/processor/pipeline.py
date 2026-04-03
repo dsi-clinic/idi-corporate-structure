@@ -223,11 +223,11 @@ class SubsidiaryPipeline(Pipeline):
                         self.stats.increment("total_filing")
 
                     else:
-                        self.logger.debug("Filename: %s does not have a 10K form.", filename)
-                        self.stats.increment("failed_filings")
-                        self.failure_registry.add(
-                            company_data["cik"], filename, failure_type=FailureType.NO_10K_FILINGS
-                        )
+                        self.logger.debug("Filename: %s skipping non-10K form: %s.", filename, form)
+
+                if not filings:
+                    self.stats.increment("failed_filings")
+                    self.failure_registry.add(company_data["cik"], filename, failure_type=FailureType.NO_10K_FILINGS)
 
         return filings
 

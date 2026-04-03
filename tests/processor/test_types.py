@@ -89,17 +89,19 @@ class TestPipelineConfig:
                 output_file=str(tmp_path / "subsidiaries.parquet"),
             )
 
-    def test_raises_when_failure_dir_missing(self, tmp_path):
+    def test_creates_failure_directory_if_missing(self, tmp_path):
         input_zip = tmp_path / "submissions.zip"
         with zipfile.ZipFile(input_zip, "w"):
             pass
 
-        with pytest.raises(FileNotFoundError, match="Failure file directory does not exist"):
-            PipelineConfig(
-                input_file=str(input_zip),
-                failure_file=str(tmp_path / "nonexistent_dir" / "failures.json"),
-                output_file=str(tmp_path / "subsidiaries.parquet"),
-            )
+        failure_file = tmp_path / "nonexistent_dir" / "failures.json"
+        PipelineConfig(
+            input_file=str(input_zip),
+            failure_file=str(failure_file),
+            output_file=str(tmp_path / "subsidiaries.parquet"),
+        )
+
+        assert failure_file.parent.exists()
 
     def test_creates_output_directory_if_missing(self, tmp_path):
         input_zip = tmp_path / "submissions.zip"

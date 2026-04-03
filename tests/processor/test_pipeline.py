@@ -26,7 +26,9 @@ class TestZipFileData:
             primary_documents=["doc1.htm", "doc2.htm"],
             filing_dates=["2024-09-28", "2024-06-30"],
         )
-        result = pipeline._zip_file_data(data, "CIK0000000001.json", "0000000001")
+        result = pipeline._zip_file_data(
+            data, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
 
         assert result is not None
         rows = list(result)
@@ -35,7 +37,9 @@ class TestZipFileData:
 
     def test_returns_none_for_empty_data(self, pipeline):
         data = make_cik_json()
-        result = pipeline._zip_file_data(data, "CIK0000000001.json", "0000000001")
+        result = pipeline._zip_file_data(
+            data, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
 
         assert result is None
 
@@ -46,7 +50,9 @@ class TestZipFileData:
             primary_documents=["doc1.htm", "doc2.htm"],
             filing_dates=["2024-09-28", "2024-06-30"],
         )
-        result = pipeline._zip_file_data(data, "CIK0000000001.json", "0000000001")
+        result = pipeline._zip_file_data(
+            data, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
 
         assert result is None
 
@@ -57,12 +63,16 @@ class TestZipFileData:
             primary_documents=["doc1.htm"],
             filing_dates=["2024-01-01"],
         )
-        pipeline._zip_file_data(data, "CIK0000000001.json", "0000000001")
+        pipeline._zip_file_data(
+            data, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
 
         assert pipeline.stats.failed_filings == 1
 
     def test_returns_none_for_missing_filings_key(self, pipeline):
-        result = pipeline._zip_file_data({}, "CIK0000000001.json", "0000000001")
+        result = pipeline._zip_file_data(
+            {}, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
         assert result is None
 
 
@@ -72,7 +82,12 @@ class TestZipFileData:
 class TestCreateFiling:
     """Tests for SubsidiaryPipeline._create_filing()."""
 
-    _COMPANY_DATA = {"cik": "0000320193", "name": "APPLE INC", "location": "CA"}
+    _COMPANY_DATA = {
+        "cik": "0000320193",
+        "name": "APPLE INC",
+        "location": "CA",
+        "filename": "CIK0000320193.json",
+    }
 
     def test_builds_directory_url(self, pipeline):
         filing = pipeline._create_filing(
@@ -665,7 +680,7 @@ class TestExtractWorker:
         work_queue.join()
 
         spy.assert_called_once_with(
-            sample_filing.cik, sample_filing.accession_number, FailureType.EXTRACTION_FAILED
+            (sample_filing.cik, sample_filing.filename), FailureType.EXTRACTION_FAILED
         )
 
 

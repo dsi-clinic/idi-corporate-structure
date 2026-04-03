@@ -96,7 +96,7 @@ class FailureRegistry:
         self._entries = {tuple(e) for e in entries_data if len(e) >= _MIN_ENTRY_LEN}
         self._reasons = {}
         for entry in self._entries:
-            key = f"{entry[0]} {entry[1]}"
+            key = " ".join(entry)
             if key in reasons_data:
                 self._reasons[entry] = reasons_data[key]
 
@@ -106,22 +106,20 @@ class FailureRegistry:
             return
 
         entries_list = [list(e) for e in self._entries]
-        reasons_dict = {f"{e[0]} {e[1]}": self._reasons.get(e, "") for e in self._entries}
+        reasons_dict = {" ".join(e): self._reasons.get(e, "") for e in self._entries}
         save_json(self.file_path, {"entries": entries_list, "reasons": reasons_dict})
 
-    def add(self, cik: str, accession_number: str, failure_type: StrEnum) -> None:
+    def add(self, key: tuple[str, str], failure_type: StrEnum) -> None:
         """Add a permanent failure entry.
 
         Args:
-            cik: The CIK of the filing entity.
-            accession_number: The accession number of the filing.
+            key: Tuple of identifier and associated file or relevant metadata.
             failure_type: The classified failure type.
         """
         if self._classifier.is_retryable(failure_type):
             return
 
         with self._lock:
-            key = (cik, accession_number)
             if key in self._entries:
                 return
 
@@ -141,7 +139,7 @@ class FailureRegistry:
         """Set-like membership check.
 
         Args:
-            key: Tuple of (cik, accession_number).
+            key: Tuple of identifier and associated file or relevant metadata.
 
         Returns:
             True if the filing should not be retried.

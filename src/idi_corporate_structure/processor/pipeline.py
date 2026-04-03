@@ -87,7 +87,7 @@ class SubsidiaryPipeline(Pipeline):
     TWENTYONE = re.compile("[^0-9]21")
     IS_OVERFLOW = re.compile(r"-submissions-\d+\.json$")
 
-    _INPUT_SAMPLE_SIZE = 10  # TODO: Remove after done testing
+    _INPUT_SAMPLE_SIZE = 100  # TODO: Remove after done testing
     _SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
     def __init__(
@@ -103,7 +103,9 @@ class SubsidiaryPipeline(Pipeline):
         )
         self.rows = []
 
-    def _retrieve_overflow_filings(self, data: dict, cik: str, zf: zipfile.ZipFile) -> tuple[list, list, list, list]:
+    def _retrieve_overflow_filings(
+        self, data: dict, cik: str, zf: zipfile.ZipFile
+    ) -> tuple[list, list, list, list]:
         """Retrieve overflow filings from the SEC submissions JSON.
 
         Args:
@@ -119,13 +121,14 @@ class SubsidiaryPipeline(Pipeline):
         primary_documents = []
         filing_dates = []
         for entry in data.get("filings", {}).get("files", []):
-
             overflow_filename = entry.get("name", "")
             if not overflow_filename:
                 continue
 
             if (cik, overflow_filename) in self.failure_registry:
-                self.logger.debug("Skipping overflow file — permanent failure recorded: %s", overflow_filename)
+                self.logger.debug(
+                    "Skipping overflow file — permanent failure recorded: %s", overflow_filename
+                )
                 self.stats.increment("skipped_filings")
                 continue
 
@@ -141,11 +144,15 @@ class SubsidiaryPipeline(Pipeline):
             except KeyError:
                 self.logger.error("Overflow file not found: %s", overflow_filename)
                 self.stats.increment("failed_filings")
-                self.failure_registry.add(cik, overflow_filename, failure_type=FailureType.NO_OVERFLOW_FILINGS)
+                self.failure_registry.add(
+                    (cik, overflow_filename), failure_type=FailureType.NO_OVERFLOW_FILINGS
+                )
 
         return forms, accession_numbers, primary_documents, filing_dates
 
-    def _zip_file_data(self, data: dict, filename: str, cik: str, zf: zipfile.ZipFile) -> zip | None:
+    def _zip_file_data(
+        self, data: dict, filename: str, cik: str, zf: zipfile.ZipFile
+    ) -> zip | None:
         """Locate and returned zipped file data.
 
         Args:
@@ -161,7 +168,9 @@ class SubsidiaryPipeline(Pipeline):
         filing_dates = data.get("filings", {}).get("recent", {}).get("filingDate", [])
 
         # Retrieve overflow filings
-        o_forms, o_accession_numbers, o_primary_documents, o_filing_dates = self._retrieve_overflow_filings(data, cik, zf)
+        o_forms, o_accession_numbers, o_primary_documents, o_filing_dates = (
+            self._retrieve_overflow_filings(data, cik, zf)
+        )
         forms.extend(o_forms)
         accession_numbers.extend(o_accession_numbers)
         primary_documents.extend(o_primary_documents)
@@ -173,13 +182,13 @@ class SubsidiaryPipeline(Pipeline):
         ):
             self.logger.error("Filename: %s has forms with mismatched data lengths.", filename)
             self.stats.increment("failed_filings")
-            self.failure_registry.add(cik, filename, failure_type=FailureType.MISMATCHED_LENGTHS)
+            self.failure_registry.add((cik, filename), failure_type=FailureType.MISMATCHED_LENGTHS)
             return None
 
         if not any([forms, accession_numbers, primary_documents, filing_dates]):
             self.logger.debug("Filename: %s has forms without data.", filename)
             self.stats.increment("failed_filings")
-            self.failure_registry.add(cik, filename, failure_type=FailureType.NO_FORM_DATA)
+            self.failure_registry.add((cik, filename), failure_type=FailureType.NO_FORM_DATA)
             return None
 
         return zip(forms, accession_numbers, primary_documents, filing_dates)
@@ -219,7 +228,9 @@ class SubsidiaryPipeline(Pipeline):
 
         if not filings:
             self.stats.increment("failed_filings")
-            self.failure_registry.add(company_data["cik"], source_filename, failure_type=FailureType.NO_10K_FILINGS)
+            self.failure_registry.add(
+                (company_data["cik"], source_filename), failure_type=FailureType.NO_10K_FILINGS
+            )
 
         return filings
 
@@ -298,7 +309,9 @@ class SubsidiaryPipeline(Pipeline):
 
         # Skip files that had a permanent failure on a previous run
         if (company_data["cik"], filename) in self.failure_registry:
-            self.logger.debug("Skipping permanent failure for filing: %s - %s", company_data["cik"], filename)
+            self.logger.debug(
+                "Skipping permanent failure for filing: %s - %s", company_data["cik"], filename
+            )
             self.stats.increment("skipped_filings")
             return filings
 
@@ -319,7 +332,6 @@ class SubsidiaryPipeline(Pipeline):
         with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
             namelist = zf.namelist()
             namelist = namelist[: self._INPUT_SAMPLE_SIZE]  # TODO: Remove after done testing
-            namelist = ["CIK0000001750.json"]  # TODO: Remove after done testing
             self.logger.info("Total # of files to process: %d", len(namelist))
 
             for filename in tqdm(namelist):
@@ -327,7 +339,11 @@ class SubsidiaryPipeline(Pipeline):
                 if filings_for_file:
                     filings.extend(filings_for_file)
 
-        self.logger.info("Located %d filings for %d files", len(filings), len(namelist) - self.stats.skipped_filings)
+        self.logger.info(
+            "Located %d filings for %d files",
+            len(filings),
+            len(namelist) - self.stats.skipped_filings,
+        )
         self.logger.info("Skipped %d files", self.stats.skipped_filings)
 
         return filings
@@ -354,9 +370,7 @@ class SubsidiaryPipeline(Pipeline):
                     e,
                 )
                 self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(
-                    filing.cik, filing.filename, FailureType.DOCUMENT_ERROR
-                )
+                self.failure_registry.add((filing.cik, filing.filename), FailureType.DOCUMENT_ERROR)
 
             except Exception as _:
                 self.logger.error(
@@ -367,7 +381,7 @@ class SubsidiaryPipeline(Pipeline):
                 )
                 self.stats.increment("failed_subsidiaries")
                 self.failure_registry.add(
-                    filing.cik, filing.filename, FailureType.EXTRACTION_FAILED
+                    (filing.cik, filing.filename), FailureType.EXTRACTION_FAILED
                 )
 
             finally:
@@ -405,7 +419,7 @@ class SubsidiaryPipeline(Pipeline):
             )
             self.stats.increment("failed_subsidiaries")
             self.failure_registry.add(
-                filing.cik, filing.filename, FailureType.NO_FILING_DIRECTORY
+                (filing.cik, filing.filename), FailureType.NO_FILING_DIRECTORY
             )
             return []
         self.sec_client.rate_limit()
@@ -434,7 +448,7 @@ class SubsidiaryPipeline(Pipeline):
                 self.logger.error("Failed to extract PDF content: %s", sec_url)
                 self.stats.increment("failed_subsidiaries")
                 self.failure_registry.add(
-                    filing.cik, filing.filename, FailureType.NO_EXHIBIT_CONTENT
+                    (filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT
                 )
         return exhibit_content
 
@@ -461,9 +475,7 @@ class SubsidiaryPipeline(Pipeline):
                 filing.accession_number,
             )
             self.stats.increment("failed_subsidiaries")
-            self.failure_registry.add(
-                filing.cik, filing.filename, FailureType.NO_EXHIBIT_CONTENT
-            )
+            self.failure_registry.add((filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT)
         return exhibit_content
 
     def _fetch_exhibit_content(self, filing: Filing, item: dict) -> dict:

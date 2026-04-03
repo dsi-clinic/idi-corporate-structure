@@ -334,7 +334,7 @@ class SubsidiaryPipeline(Pipeline):
             namelist = namelist[: self._INPUT_SAMPLE_SIZE]  # TODO: Remove after done testing
             self.logger.info("Total # of files to process: %d", len(namelist))
 
-            for filename in tqdm(namelist):
+            for filename in tqdm(namelist, desc="Retrieving filings"):
                 filings_for_file = self._parse_file(zf, filename)
                 if filings_for_file:
                     filings.extend(filings_for_file)
@@ -387,17 +387,27 @@ class SubsidiaryPipeline(Pipeline):
             finally:
                 work_queue.task_done()
 
-    def _results_worker(self, results_queue: queue.Queue, subsidiaries: list[Subsidiary]) -> None:
+    def _results_worker(
+        self,
+        results_queue: queue.Queue,
+        subsidiaries: list[Subsidiary],
+        extract_bar: tqdm | None = None,
+    ) -> None:
         """Results worker for the pipeline.
 
         Args:
             results_queue: Queue of results
             subsidiaries: List of subsidiaries to add to
+            extract_bar: Optional tqdm progress bar to update on each completion.
         """
         while True:
             result = results_queue.get()
             subsidiaries.extend(result)
             self.stats.increment("total_subsidiaries", len(result))
+
+            if extract_bar is not None:
+                extract_bar.update(1)
+
             results_queue.task_done()
 
     def _fetch_directory(self, filing: Filing) -> list[dict]:
@@ -542,38 +552,45 @@ class SubsidiaryPipeline(Pipeline):
         result_queue = queue.Queue()
         subsidiaries = []
 
-        # Start extract and results workers
-        extract_workers = [
-            threading.Thread(
-                target=self._extract_worker,
-                args=(work_queue, result_queue),
+        with (
+            tqdm(
+                total=len(input_list), desc="Fetching exhibits", position=0, leave=True
+            ) as fetch_bar,
+            tqdm(total=0, desc="Extracting subsidiaries", position=1, leave=True) as extract_bar,
+        ):
+            # Start extract and results workers
+            extract_workers = [
+                threading.Thread(
+                    target=self._extract_worker,
+                    args=(work_queue, result_queue),
+                    daemon=True,
+                    name=f"extract-worker-{i}",
+                )
+                for i in range(self.config.num_workers)
+            ]
+            for worker in extract_workers:
+                worker.start()
+
+            results_worker = threading.Thread(
+                target=self._results_worker,
+                args=(result_queue, subsidiaries, extract_bar),
                 daemon=True,
-                name=f"extract-worker-{i}",
+                name="results-worker",
             )
-            for i in range(self.config.num_workers)
-        ]
-        for worker in extract_workers:
-            worker.start()
+            results_worker.start()
 
-        results_worker = threading.Thread(
-            target=self._results_worker,
-            args=(result_queue, subsidiaries),
-            daemon=True,
-            name="results-worker",
-        )
-        results_worker.start()
+            # SEC operations to fetch exhibit data — one task per document
+            for filing in input_list:
+                exhibit_contents = self._fetch_exhibit(filing)
+                for exhibit_content in exhibit_contents:
+                    work_queue.put((filing, exhibit_content))
+                    extract_bar.total += 1
+                    extract_bar.refresh()
+                fetch_bar.update(1)
 
-        # SEC operations to fetch exhibit data — one task per document
-        for filing in tqdm(input_list):
-            exhibit_contents = self._fetch_exhibit(filing)
-            for exhibit_content in exhibit_contents:
-                work_queue.put((filing, exhibit_content))
-
-        # Shutdown workers as all work is done
-        self.logger.info("Waiting on extract and results workers...")
-        work_queue.join()
-        result_queue.join()
-        self.logger.info("Extract and results workers finished.")
+            # Wait for all extraction to complete
+            work_queue.join()
+            result_queue.join()
 
         return subsidiaries
 

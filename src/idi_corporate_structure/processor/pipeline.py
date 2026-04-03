@@ -1,6 +1,7 @@
 """Pipeline for extracting subsidiary data from SEC 10-K Exhibit 21 filings."""
 
 # Standard application imports
+import datetime
 import io
 import json
 import queue
@@ -65,16 +66,19 @@ class Pipeline(ABC):
 
     def run(self) -> None:
         """Run the pipeline."""
+        start_time = datetime.datetime.now()
         input_data = self.load_input()
         self.logger.info("Located %d input data items.", len(input_data))
 
         results = self.process(input_data)
         self.logger.info("Located %d result data items.", len(results))
-        for r in results:
-            print(r)
+        # for r in results:
+        #     print(r)
 
         self.save_output(results)
         self.display_stats()
+        end_time = datetime.datetime.now()
+        self.logger.info("Elasped time: %s", end_time - start_time)
 
 
 class SubsidiaryPipeline(Pipeline):
@@ -85,7 +89,7 @@ class SubsidiaryPipeline(Pipeline):
     IS_DATE = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")
     TWENTYONE = re.compile("[^0-9]21")
 
-    _INPUT_SAMPLE_SIZE = 10  # TODO: Remove after done testing
+    _INPUT_SAMPLE_SIZE = 100  # TODO: Remove after done testing
     _SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
     def __init__(
@@ -499,7 +503,7 @@ if __name__ == "__main__":
         # input_file="https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip",
         input_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/input/submissions.zip",
         failure_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/failures/failures.json",
-        rate_limit=0.12,
+        rate_limit=0.2,
         num_workers=10,
     )
 

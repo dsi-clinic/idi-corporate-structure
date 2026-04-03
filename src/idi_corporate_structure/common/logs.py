@@ -8,6 +8,7 @@ import os
 # Third party imports
 import boto3
 import requests
+import tqdm
 import watchtower
 
 _configured_loggers: set[str] = set()
@@ -54,6 +55,16 @@ def _get_instance_id() -> str:
         return hostname.split(".")[0]
 
 
+class TqdmLoggingHandler(logging.Handler):
+    """Logging handler that writes via tqdm.write() to avoid disrupting progress bars."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            tqdm.tqdm.write(self.format(record))
+        except Exception:
+            self.handleError(record)
+
+
 def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     """Creates a logger with the given name and level.
 
@@ -78,7 +89,7 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     logger.propagate = False  # Prevent log messages from being propagated to the root logger
 
     # Create console handler and set level
-    ch = logging.StreamHandler()
+    ch = TqdmLoggingHandler()
     ch.setLevel(level)
 
     # Create formatter and add to handler

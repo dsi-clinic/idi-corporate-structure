@@ -70,13 +70,15 @@ class TestZipFileData:
 class TestCreateFiling:
     """Tests for SubsidiaryPipeline._create_filing()."""
 
+    _COMPANY_DATA = {"cik": "0000320193", "name": "APPLE INC", "location": "CA"}
+
     def test_builds_directory_url(self, pipeline):
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="aapl-20240928.htm",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert (
             filing.directory
@@ -87,9 +89,9 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="doc.htm",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert "0000320193-24-000123" not in filing.directory
         assert "000032019324000123" in filing.directory
@@ -98,9 +100,9 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="aapl-20240928.htm",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert "aapl-20240928.htm" in filing.primary_document
 
@@ -108,9 +110,9 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="aapl-20240928.txt",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert filing.primary_document == ""
 
@@ -118,9 +120,9 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert filing.primary_document == ""
 
@@ -128,11 +130,9 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="doc.htm",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
-            company_name="APPLE INC",
-            location="CA",
+            company_data=self._COMPANY_DATA,
         )
         assert filing.cik == "0000320193"
         assert filing.filing_date == "2024-09-28"
@@ -162,6 +162,7 @@ class TestParseFile:
             accession_numbers=["ACC-10K", "ACC-10Q", "ACC-8K"],
             primary_documents=["10k.htm", "10q.htm", "8k.htm"],
             filing_dates=["2024-09-28", "2024-06-30", "2024-03-01"],
+            cik="0000000001",
         )
         mock_zf = self._make_zip_with_cik("CIK0000000001.json", data)
 
@@ -227,12 +228,13 @@ class TestParseFile:
 
         assert pipeline.stats.total_filing == 1
 
-    def test_strips_cik_prefix_from_filename(self, pipeline):
+    def test_reads_cik_from_json_data(self, pipeline):
         data = make_cik_json(
             forms=["10-K"],
             accession_numbers=["ACC1"],
             primary_documents=["doc.htm"],
             filing_dates=["2024-01-01"],
+            cik="0000320193",
         )
         mock_zf = self._make_zip_with_cik("CIK0000320193.json", data)
 

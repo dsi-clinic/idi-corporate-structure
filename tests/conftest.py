@@ -18,9 +18,10 @@ def make_cik_json(
     accession_numbers: list | None = None,
     primary_documents: list | None = None,
     filing_dates: list | None = None,
+    cik: str = "",
 ) -> dict:
     """Build a minimal CIK JSON payload matching the SEC submissions.zip format."""
-    return {
+    payload: dict = {
         "filings": {
             "recent": {
                 "form": forms or [],
@@ -30,6 +31,9 @@ def make_cik_json(
             }
         }
     }
+    if cik:
+        payload["cik"] = cik
+    return payload
 
 
 def make_directory_response(items: list | None = None) -> dict:

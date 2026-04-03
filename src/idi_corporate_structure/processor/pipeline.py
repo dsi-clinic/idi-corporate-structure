@@ -41,7 +41,6 @@ class Pipeline(ABC):
         """Initialize the pipeline with config, SEC client, and extractor."""
         self.config = config
         self.extractor = extractor
-        self.logger = get_logger("Pipeline")
         self.sec_client = sec_client
         self.stats = PipelineStats()
 
@@ -68,12 +67,12 @@ class Pipeline(ABC):
         """Run the pipeline."""
         start_time = datetime.datetime.now()
         input_data = self.load_input()
-        self.logger.info("Located %d input data items.", len(input_data))
+        self.logger.info("Located %d input data items", len(input_data))
 
         results = self.process(input_data)
-        self.logger.info("Located %d result data items.", len(results))
-        # for r in results:
-        #     print(r)
+        self.logger.info("Located %d subsidiaries", len(results))
+        for r in results:
+            print(r)
 
         self.save_output(results)
         self.display_stats()
@@ -89,7 +88,7 @@ class SubsidiaryPipeline(Pipeline):
     IS_DATE = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")
     TWENTYONE = re.compile("[^0-9]21")
 
-    _INPUT_SAMPLE_SIZE = 100  # TODO: Remove after done testing
+    _INPUT_SAMPLE_SIZE = 10  # TODO: Remove after done testing
     _SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
     def __init__(
@@ -97,6 +96,7 @@ class SubsidiaryPipeline(Pipeline):
     ) -> None:
         """Initialize the subsidiary pipeline with failure registry."""
         super().__init__(config, sec_client, extractor)
+        self.logger = get_logger("SubsidiaryPipeline")
         self.failure_registry = FailureRegistry(
             config.failure_file,
             classifier=CorporateStructureFailureClassifier(),
@@ -467,8 +467,10 @@ class SubsidiaryPipeline(Pipeline):
                 work_queue.put((filing, exhibit_content))
 
         # Shutdown workers as all work is done
+        self.logger.info("Waiting on extract and results workers...")
         work_queue.join()
         result_queue.join()
+        self.logger.info("Extract and results workers finished.")
 
         return subsidiaries
 

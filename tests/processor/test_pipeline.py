@@ -417,7 +417,9 @@ class TestFetchExhibitContent:
         mock_pdf.__enter__ = lambda s: s
         mock_pdf.__exit__ = MagicMock(return_value=False)
         mock_pdf.pages = [mock_page]
-        mocker.patch("idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf)
+        mocker.patch(
+            "idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf
+        )
 
         result = pipeline._fetch_exhibit_content(sample_filing, item)
 
@@ -434,7 +436,9 @@ class TestFetchExhibitContent:
         mock_pdf.__enter__ = lambda s: s
         mock_pdf.__exit__ = MagicMock(return_value=False)
         mock_pdf.pages = [mock_page]
-        mocker.patch("idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf)
+        mocker.patch(
+            "idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf
+        )
 
         mock_warn = mocker.patch.object(pipeline.logger, "warning")
         pipeline._fetch_exhibit_content(sample_filing, item)

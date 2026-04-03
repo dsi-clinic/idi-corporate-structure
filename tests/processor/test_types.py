@@ -126,6 +126,8 @@ class TestFilingDataclass:
         assert sample_filing.cik == "0000320193"
         assert sample_filing.form_type == "10-K"
         assert "index.json" in sample_filing.directory
+        assert sample_filing.company_name == "APPLE INC"
+        assert sample_filing.location == "CA"
 
     def test_filing_equality(self):
         f1 = Filing(

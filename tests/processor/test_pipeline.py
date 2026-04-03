@@ -131,11 +131,15 @@ class TestCreateFiling:
             cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_name="APPLE INC",
+            location="CA",
         )
         assert filing.cik == "0000320193"
         assert filing.filing_date == "2024-09-28"
         assert filing.form_type == "10-K"
         assert filing.accession_number == "0000320193-24-000123"
+        assert filing.company_name == "APPLE INC"
+        assert filing.location == "CA"
 
 
 # ── _parse_file ───────────────────────────────────────────────────────────────
@@ -235,6 +239,36 @@ class TestParseFile:
         filings = pipeline._parse_file(mock_zf, "CIK0000320193.json")
 
         assert filings[0].cik == "0000320193"
+
+    def test_parses_company_name_and_location_from_json(self, pipeline):
+        data = make_cik_json(
+            forms=["10-K"],
+            accession_numbers=["ACC1"],
+            primary_documents=["doc.htm"],
+            filing_dates=["2024-01-01"],
+        )
+        data["name"] = "APPLE INC"
+        data["stateOfIncorporation"] = "CA"
+        mock_zf = self._make_zip_with_cik("CIK0000320193.json", data)
+
+        filings = pipeline._parse_file(mock_zf, "CIK0000320193.json")
+
+        assert filings[0].company_name == "APPLE INC"
+        assert filings[0].location == "CA"
+
+    def test_company_name_and_location_default_to_empty_string(self, pipeline):
+        data = make_cik_json(
+            forms=["10-K"],
+            accession_numbers=["ACC1"],
+            primary_documents=["doc.htm"],
+            filing_dates=["2024-01-01"],
+        )
+        mock_zf = self._make_zip_with_cik("CIK0000320193.json", data)
+
+        filings = pipeline._parse_file(mock_zf, "CIK0000320193.json")
+
+        assert filings[0].company_name == ""
+        assert filings[0].location == ""
 
 
 # ── _fetch_directory ──────────────────────────────────────────────────────────

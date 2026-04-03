@@ -22,6 +22,8 @@ class Filing:
     accession_number: str
     directory: str
     primary_document: str
+    company_name: str = ""
+    location: str = ""
 
 
 @dataclass
@@ -74,9 +76,11 @@ class Subsidiary:
     """A single subsidiary entity extracted from an Exhibit 21 document."""
 
     parent_cik: str
-    name: str
-    location: str
     filing_date: str
     form_type: str
     accession_number: str
     exhibit_url: str
+    name: str
+    location: str
+    parent_name: str = ""
+    parent_location: str = ""

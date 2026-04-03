@@ -63,6 +63,8 @@ def sample_filing() -> Filing:
         accession_number="0000320193-24-000123",
         directory="https://www.sec.gov/Archives/edgar/data/0000320193/000032019324000123/index.json",
         primary_document="https://www.sec.gov/Archives/edgar/data/0000320193/000032019324000123/aapl-20240928.htm",
+        company_name="APPLE INC",
+        location="CA",
     )
 
 

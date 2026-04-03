@@ -324,6 +324,7 @@ class SecClient(ApiClient):
             time.sleep(self._rate_limit - elapsed)
         self._last_request = time.time()
 
+
 class OpenAiClient(ApiClient):
     """API client for the OpenAI API."""
 

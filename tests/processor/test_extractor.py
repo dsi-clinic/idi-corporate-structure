@@ -14,11 +14,7 @@ def _make_openai_response(subsidiaries: list[dict]) -> dict:
     return {
         "status_code": 200,
         "url": "https://api.openai.com/v1/chat/completions",
-        "data": {
-            "choices": [
-                {"message": {"content": json.dumps({"subsidiaries": subsidiaries})}}
-            ]
-        },
+        "data": {"choices": [{"message": {"content": json.dumps({"subsidiaries": subsidiaries})}}]},
     }
 
 
@@ -29,10 +25,12 @@ class TestGptExtractor:
         mocker.patch.object(
             GptExtractor._OPENAI_CLIENT,
             "query_endpoint",
-            return_value=_make_openai_response([
-                {"name": "Apple Operations LLC", "in": "Delaware"},
-                {"name": "Apple Europe Ltd", "in": "Ireland"},
-            ]),
+            return_value=_make_openai_response(
+                [
+                    {"name": "Apple Operations LLC", "in": "Delaware"},
+                    {"name": "Apple Europe Ltd", "in": "Ireland"},
+                ]
+            ),
         )
         extractor = GptExtractor()
         result = extractor.extract(sample_filing, make_exhibit_response())

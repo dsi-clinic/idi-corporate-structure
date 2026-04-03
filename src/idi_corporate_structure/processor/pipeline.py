@@ -151,10 +151,12 @@ class SubsidiaryPipeline(Pipeline):
             Filing object with form data
         """
         accession = accession_number.replace("-", "")
-        directory = f"{self.sec_client.SEC_URL}/{company_data["cik"]}/{accession}/index.json"
+        directory = f"{self.sec_client.SEC_URL}/{company_data['cik']}/{accession}/index.json"
 
         if primary_document != "" and primary_document.split(".")[-1].upper() in ("HTM", "HTML"):
-            primary = f"{self.sec_client.SEC_URL}/{company_data["cik"]}/{accession}/{primary_document}"
+            primary = (
+                f"{self.sec_client.SEC_URL}/{company_data['cik']}/{accession}/{primary_document}"
+            )
         else:
             primary = ""
 
@@ -186,7 +188,11 @@ class SubsidiaryPipeline(Pipeline):
             with zf.open(filename) as file:
                 data = json.load(file)
 
-            company_data = { "cik": data.get("cik", ""), "name": data.get("name", ""), "location": data.get("stateOfIncorporation", "") }
+            company_data = {
+                "cik": data.get("cik", ""),
+                "name": data.get("name", ""),
+                "location": data.get("stateOfIncorporation", ""),
+            }
             filings_zip = self._zip_file_data(data, filename, company_data["cik"])
 
             if filings_zip:
@@ -246,9 +252,17 @@ class SubsidiaryPipeline(Pipeline):
                 results_queue.put(subsidiaries)
 
             except DocumentError as e:
-                self.logger.error("Document error for filing: %s - %s - %s: %s", filing.cik, filing.accession_number, filing.filing_date, e)
+                self.logger.error(
+                    "Document error for filing: %s - %s - %s: %s",
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
+                    e,
+                )
                 self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(filing.cik, filing.accession_number, FailureType.DOCUMENT_ERROR)
+                self.failure_registry.add(
+                    filing.cik, filing.accession_number, FailureType.DOCUMENT_ERROR
+                )
 
             except Exception as _:
                 self.logger.error(
@@ -314,17 +328,13 @@ class SubsidiaryPipeline(Pipeline):
         Returns:
             Dict with 'url' and 'data' keys
         """
-        self.logger.warning(
-            "PDF exhibit found: %s / %s", filing.cik, item["name"]
-        )
+        self.logger.warning("PDF exhibit found: %s / %s", filing.cik, item["name"])
         item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_bytes=True)
         exhibit_content = {}
         if item_response.get("data"):
             try:
                 with pdfplumber.open(io.BytesIO(item_response["data"])) as pdf:
-                    text = "\n\n".join(
-                        page.extract_text() or "" for page in pdf.pages
-                    )
+                    text = "\n\n".join(page.extract_text() or "" for page in pdf.pages)
                 exhibit_content = {"url": sec_url, "data": text}
             except Exception:
                 self.logger.error("Failed to extract PDF content: %s", sec_url)

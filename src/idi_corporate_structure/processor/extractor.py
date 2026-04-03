@@ -12,6 +12,7 @@ from idi_corporate_structure.processor.types import Filing, Subsidiary
 
 class DocumentError(Exception):
     """Exception raised for document-specific errors."""
+
     pass
 
 
@@ -35,6 +36,7 @@ class Extractor(ABC):
 class GptExtractor(Extractor):
     """Extracts subsidiaries from a single exhibit document using GPT."""
 
+    _DOCUMENT_ERROR_STATUS_CODE = 400
     _OPENAI_CLIENT = OpenAiClient(api_key=os.environ.get("OPENAI_API_KEY", ""))
     _SYSTEM_PROMPT = """
     Given a table of a company's subsidiaries (in Markdown or raw text, previously converted from PDF), format them as a JSON, like
@@ -104,7 +106,7 @@ class GptExtractor(Extractor):
         response = self._OPENAI_CLIENT.query_endpoint(post_data)
 
         if "error" in response:
-            if response.get("status_code") == 400:
+            if response.get("status_code") == self._DOCUMENT_ERROR_STATUS_CODE:
                 raise DocumentError(response["error"])
             raise RuntimeError(response["error"])
 

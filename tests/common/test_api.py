@@ -62,9 +62,8 @@ class TestSecClientQueryEndpoint:
 
         assert "error" in result
 
-    def test_updates_last_request_timestamp(self):
+    def test_updates_last_request_timestamp_after_rate_limit(self):
         client = SecClient(rate_limit=0.0)
-        before = time.time()
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.url = "https://www.sec.gov/test"
@@ -72,6 +71,9 @@ class TestSecClientQueryEndpoint:
 
         with patch.object(client.session, "get", return_value=mock_response):
             client.query_endpoint("https://www.sec.gov/test")
+
+        before = time.time()
+        client.rate_limit()
 
         assert client._last_request >= before
 

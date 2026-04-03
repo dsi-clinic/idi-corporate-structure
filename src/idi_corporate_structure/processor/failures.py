@@ -22,6 +22,7 @@ class FailureType(StrEnum):
         "no_filing_directory"  # SEC queried filing but no directory listing was found
     )
     NO_EXHIBIT_CONTENT = "no_exhibit_content"  # Exhibit has no content
+    DOCUMENT_ERROR = "document_error"  # Document is too long to process
     EXTRACTION_FAILED = "extraction_failed"  # GPT returned no structured data
     API_ERROR = "api_error"  # HTTP failure fetching filing document
     RATE_LIMIT = "rate_limit"  # SEC rate limit (429)
@@ -37,6 +38,7 @@ class CorporateStructureFailureClassifier(FailureClassifier):
             FailureType.NO_10K_FILINGS,
             FailureType.NO_EXHIBIT_CONTENT,
             FailureType.NO_FILING_DIRECTORY,
+            FailureType.DOCUMENT_ERROR,
         }
     )
 

@@ -10,6 +10,11 @@ from idi_corporate_structure.common.api import OpenAiClient
 from idi_corporate_structure.processor.types import Filing, Subsidiary
 
 
+class DocumentError(Exception):
+    """Exception raised for document-specific errors."""
+    pass
+
+
 class Extractor(ABC):
     """Interface for extracting subsidiaries from a single exhibit document."""
 
@@ -86,11 +91,10 @@ class GptExtractor(Extractor):
             },
         }
 
-    def _summarize(self, filing: Filing, document: str) -> str:
+    def _summarize(self, document: str) -> str:
         """Summarize the document using GPT.
 
         Args:
-            filing: The filing the document belongs to.
             document: The document to summarize.
 
         Returns:
@@ -100,7 +104,8 @@ class GptExtractor(Extractor):
         response = self._OPENAI_CLIENT.query_endpoint(post_data)
 
         if "error" in response:
-            self.logger.error("Error extracting subsidiaries for: %s (%s)", filing.parent_name, filing.cik)
+            if response.get("status_code") == 400:
+                raise DocumentError(response["error"])
             raise RuntimeError(response["error"])
 
         content = response["data"]["choices"][0]["message"]["content"]
@@ -108,7 +113,7 @@ class GptExtractor(Extractor):
 
     def extract(self, filing: Filing, document: dict) -> list[Subsidiary]:
         """Use GPT to extract structured subsidiary data from a single document."""
-        summary = self._summarize(filing, document["data"])
+        summary = self._summarize(document["data"])
         return [
             Subsidiary(
                 parent_cik=filing.cik,

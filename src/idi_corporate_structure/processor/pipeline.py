@@ -18,7 +18,7 @@ from idi_corporate_structure.common.api import SecClient
 from idi_corporate_structure.common.failures import FailureRegistry
 from idi_corporate_structure.common.logs import get_logger
 from idi_corporate_structure.common.storage import open_zip
-from idi_corporate_structure.processor.extractor import GptExtractor
+from idi_corporate_structure.processor.extractor import DocumentError, GptExtractor
 from idi_corporate_structure.processor.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
@@ -244,6 +244,11 @@ class SubsidiaryPipeline(Pipeline):
             try:
                 subsidiaries = self.extractor.extract(filing, exhibit_contents)
                 results_queue.put(subsidiaries)
+
+            except DocumentError as e:
+                self.logger.error("Document error for filing: %s - %s - %s: %s", filing.cik, filing.accession_number, filing.filing_date, e)
+                self.stats.increment("failed_subsidiaries")
+                self.failure_registry.add(filing.cik, filing.accession_number, FailureType.DOCUMENT_ERROR)
 
             except Exception as _:
                 self.logger.error(

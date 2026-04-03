@@ -73,8 +73,6 @@ class Pipeline(ABC):
 
         results = self.process(input_data)
         self.logger.info("Located %d subsidiaries", len(results))
-        for r in results:
-            print(r)
 
         self.save_output(results)
         self.display_stats()
@@ -175,6 +173,7 @@ class SubsidiaryPipeline(Pipeline):
             primary_document=primary,
             company_name=company_data["name"],
             location=company_data["location"],
+            filename=company_data["filename"],
         )
 
     def _parse_file(self, zf: zipfile.ZipFile, filename: str) -> list[Filing]:
@@ -198,7 +197,15 @@ class SubsidiaryPipeline(Pipeline):
                 "cik": data.get("cik", ""),
                 "name": data.get("name", ""),
                 "location": data.get("stateOfIncorporation", ""),
+                "filename": filename,
             }
+
+            # Skip files that had a permanent failure on a previous run
+            if (company_data["cik"], filename) in self.failure_registry:
+                self.logger.debug("Skipping permanent failure for filing: %s - %s", company_data["cik"], filename)
+                self.stats.increment("skipped_filings")
+                return filings
+
             filings_zip = self._zip_file_data(data, filename, company_data["cik"])
 
             if filings_zip:
@@ -264,7 +271,7 @@ class SubsidiaryPipeline(Pipeline):
                 )
                 self.stats.increment("failed_subsidiaries")
                 self.failure_registry.add(
-                    filing.cik, filing.accession_number, FailureType.DOCUMENT_ERROR
+                    filing.cik, filing.filename, FailureType.DOCUMENT_ERROR
                 )
 
             except Exception as _:
@@ -276,7 +283,7 @@ class SubsidiaryPipeline(Pipeline):
                 )
                 self.stats.increment("failed_subsidiaries")
                 self.failure_registry.add(
-                    filing.cik, filing.accession_number, FailureType.EXTRACTION_FAILED
+                    filing.cik, filing.filename, FailureType.EXTRACTION_FAILED
                 )
 
             finally:
@@ -314,7 +321,7 @@ class SubsidiaryPipeline(Pipeline):
             )
             self.stats.increment("failed_subsidiaries")
             self.failure_registry.add(
-                filing.cik, filing.accession_number, FailureType.NO_FILING_DIRECTORY
+                filing.cik, filing.filename, FailureType.NO_FILING_DIRECTORY
             )
             return []
         self.sec_client.rate_limit()
@@ -343,7 +350,7 @@ class SubsidiaryPipeline(Pipeline):
                 self.logger.error("Failed to extract PDF content: %s", sec_url)
                 self.stats.increment("failed_subsidiaries")
                 self.failure_registry.add(
-                    filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT
+                    filing.cik, filing.filename, FailureType.NO_EXHIBIT_CONTENT
                 )
         return exhibit_content
 
@@ -371,7 +378,7 @@ class SubsidiaryPipeline(Pipeline):
             )
             self.stats.increment("failed_subsidiaries")
             self.failure_registry.add(
-                filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT
+                filing.cik, filing.filename, FailureType.NO_EXHIBIT_CONTENT
             )
         return exhibit_content
 

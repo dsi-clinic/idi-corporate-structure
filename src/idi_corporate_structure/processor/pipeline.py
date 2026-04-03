@@ -85,6 +85,7 @@ class SubsidiaryPipeline(Pipeline):
     IS_10K = re.compile("10-?K")
     IS_DATE = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")
     TWENTYONE = re.compile("[^0-9]21")
+    IS_OVERFLOW = re.compile(r"-submissions-\d+\.json$")
 
     _INPUT_SAMPLE_SIZE = 10  # TODO: Remove after done testing
     _SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
@@ -102,18 +103,69 @@ class SubsidiaryPipeline(Pipeline):
         )
         self.rows = []
 
-    def _zip_file_data(self, data: dict, filename: str, cik: str) -> zip | None:
+    def _retrieve_overflow_filings(self, data: dict, cik: str, zf: zipfile.ZipFile) -> tuple[list, list, list, list]:
+        """Retrieve overflow filings from the SEC submissions JSON.
+
+        Args:
+            data: Data to retrieve overflow filings from
+            cik: Identifier of file data was retrieved from
+            zf: Open ZipFile to read from.
+
+        Returns:
+            Tuple of lists of forms, accession numbers, primary documents, and filing dates.
+        """
+        forms = []
+        accession_numbers = []
+        primary_documents = []
+        filing_dates = []
+        for entry in data.get("filings", {}).get("files", []):
+
+            overflow_filename = entry.get("name", "")
+            if not overflow_filename:
+                continue
+
+            if (cik, overflow_filename) in self.failure_registry:
+                self.logger.debug("Skipping overflow file — permanent failure recorded: %s", overflow_filename)
+                self.stats.increment("skipped_filings")
+                continue
+
+            try:
+                with zf.open(overflow_filename) as of:
+                    overflow = json.load(of)
+
+                forms += overflow.get("form", [])
+                accession_numbers += overflow.get("accessionNumber", [])
+                primary_documents += overflow.get("primaryDocument", [])
+                filing_dates += overflow.get("filingDate", [])
+
+            except KeyError:
+                self.logger.error("Overflow file not found: %s", overflow_filename)
+                self.stats.increment("failed_filings")
+                self.failure_registry.add(cik, overflow_filename, failure_type=FailureType.NO_OVERFLOW_FILINGS)
+
+        return forms, accession_numbers, primary_documents, filing_dates
+
+    def _zip_file_data(self, data: dict, filename: str, cik: str, zf: zipfile.ZipFile) -> zip | None:
         """Locate and returned zipped file data.
 
         Args:
             data: Data to retrieve specific file data from
             filename: Name of file data was retrieved from
             cik: Identifier of file data was retrieved from
+            zf: Open ZipFile to read from.
         """
+        # Retrieve recent filings
         forms = data.get("filings", {}).get("recent", {}).get("form", [])
         accession_numbers = data.get("filings", {}).get("recent", {}).get("accessionNumber", [])
         primary_documents = data.get("filings", {}).get("recent", {}).get("primaryDocument", [])
         filing_dates = data.get("filings", {}).get("recent", {}).get("filingDate", [])
+
+        # Retrieve overflow filings
+        o_forms, o_accession_numbers, o_primary_documents, o_filing_dates = self._retrieve_overflow_filings(data, cik, zf)
+        forms.extend(o_forms)
+        accession_numbers.extend(o_accession_numbers)
+        primary_documents.extend(o_primary_documents)
+        filing_dates.extend(o_filing_dates)
 
         if (
             len({len(forms), len(accession_numbers), len(primary_documents), len(filing_dates)})
@@ -131,6 +183,45 @@ class SubsidiaryPipeline(Pipeline):
             return None
 
         return zip(forms, accession_numbers, primary_documents, filing_dates)
+
+    def _process_filings_zip(
+        self,
+        filings_zip: zip,
+        company_data: dict,
+        source_filename: str,
+    ) -> list[Filing]:
+        """Iterate a filings zip and collect 10-K Filing objects.
+
+        Args:
+            filings_zip: zip of (form, accession_number, primary_document, filing_date) tuples.
+            company_data: Dict with cik, name, location keys.
+            source_filename: Filename used for failure registry entries and debug logging.
+
+        Returns:
+            List of Filing objects for 10-K forms only.
+        """
+        filings = []
+        for form, accession_number, primary_document, filing_date in filings_zip:
+            if self.IS_10K.match(form):
+                filings.append(
+                    self._create_filing(
+                        accession_number=accession_number,
+                        primary_document=primary_document,
+                        filing_date=filing_date,
+                        form=form,
+                        company_data=company_data,
+                    )
+                )
+                self.stats.increment("total_filing")
+
+            else:
+                self.logger.debug("Filename: %s skipping non-10K form: %s.", source_filename, form)
+
+        if not filings:
+            self.stats.increment("failed_filings")
+            self.failure_registry.add(company_data["cik"], source_filename, failure_type=FailureType.NO_10K_FILINGS)
+
+        return filings
 
     def _create_filing(
         self,
@@ -187,45 +278,34 @@ class SubsidiaryPipeline(Pipeline):
             List of Filing objects with form data
         """
         filings = []
-        if filename.startswith("CIK") and filename.endswith(".json"):
-            with zf.open(filename) as file:
-                data = json.load(file)
 
-            company_data = {
-                "cik": data.get("cik", ""),
-                "name": data.get("name", ""),
-                "location": data.get("stateOfIncorporation", ""),
-                "filename": filename,
-            }
+        # Overflow files have no company metadata; loaded below with primary file
+        if self.IS_OVERFLOW.search(filename):
+            return filings
 
-            # Skip files that had a permanent failure on a previous run
-            if (company_data["cik"], filename) in self.failure_registry:
-                self.logger.debug("Skipping permanent failure for filing: %s - %s", company_data["cik"], filename)
-                self.stats.increment("skipped_filings")
-                return filings
+        if not (filename.startswith("CIK") and filename.endswith(".json")):
+            return filings
 
-            filings_zip = self._zip_file_data(data, filename, company_data["cik"])
+        with zf.open(filename) as file:
+            data = json.load(file)
 
-            if filings_zip:
-                for form, accession_number, primary_document, filing_date in filings_zip:
-                    if self.IS_10K.match(form):
-                        filings.append(
-                            self._create_filing(
-                                accession_number=accession_number,
-                                primary_document=primary_document,
-                                filing_date=filing_date,
-                                form=form,
-                                company_data=company_data,
-                            )
-                        )
-                        self.stats.increment("total_filing")
+        company_data = {
+            "cik": data.get("cik", ""),
+            "name": data.get("name", ""),
+            "location": data.get("stateOfIncorporation", ""),
+            "filename": filename,
+        }
 
-                    else:
-                        self.logger.debug("Filename: %s skipping non-10K form: %s.", filename, form)
+        # Skip files that had a permanent failure on a previous run
+        if (company_data["cik"], filename) in self.failure_registry:
+            self.logger.debug("Skipping permanent failure for filing: %s - %s", company_data["cik"], filename)
+            self.stats.increment("skipped_filings")
+            return filings
 
-                if not filings:
-                    self.stats.increment("failed_filings")
-                    self.failure_registry.add(company_data["cik"], filename, failure_type=FailureType.NO_10K_FILINGS)
+        # Process filings
+        filings_zip = self._zip_file_data(data, filename, company_data["cik"], zf)
+        if filings_zip:
+            filings.extend(self._process_filings_zip(filings_zip, company_data, filename))
 
         return filings
 
@@ -239,6 +319,7 @@ class SubsidiaryPipeline(Pipeline):
         with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
             namelist = zf.namelist()
             namelist = namelist[: self._INPUT_SAMPLE_SIZE]  # TODO: Remove after done testing
+            namelist = ["CIK0000001750.json"]  # TODO: Remove after done testing
             self.logger.info("Total # of files to process: %d", len(namelist))
 
             for filename in tqdm(namelist):

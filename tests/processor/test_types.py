@@ -74,6 +74,7 @@ class TestPipelineConfig:
         config = PipelineConfig(
             input_file=str(input_zip),
             failure_file=str(tmp_path / "failures.json"),
+            output_file=str(tmp_path / "subsidiaries.parquet"),
         )
 
         assert config.input_file == str(input_zip)
@@ -85,6 +86,7 @@ class TestPipelineConfig:
             PipelineConfig(
                 input_file=str(tmp_path / "nonexistent.zip"),
                 failure_file=str(tmp_path / "failures.json"),
+                output_file=str(tmp_path / "subsidiaries.parquet"),
             )
 
     def test_raises_when_failure_dir_missing(self, tmp_path):
@@ -96,13 +98,29 @@ class TestPipelineConfig:
             PipelineConfig(
                 input_file=str(input_zip),
                 failure_file=str(tmp_path / "nonexistent_dir" / "failures.json"),
+                output_file=str(tmp_path / "subsidiaries.parquet"),
             )
+
+    def test_creates_output_directory_if_missing(self, tmp_path):
+        input_zip = tmp_path / "submissions.zip"
+        with zipfile.ZipFile(input_zip, "w"):
+            pass
+
+        output_file = tmp_path / "new_dir" / "subsidiaries.parquet"
+        PipelineConfig(
+            input_file=str(input_zip),
+            failure_file=str(tmp_path / "failures.json"),
+            output_file=str(output_file),
+        )
+
+        assert output_file.parent.exists()
 
     def test_skips_validation_for_s3_paths(self):
         """S3 paths should not trigger local file existence checks."""
         config = PipelineConfig(
             input_file="s3://my-bucket/submissions.zip",
             failure_file="s3://my-bucket/failures.json",
+            output_file="s3://my-bucket/subsidiaries.parquet",
         )
         assert config.input_file == "s3://my-bucket/submissions.zip"
 
@@ -114,6 +132,7 @@ class TestPipelineConfig:
         config = PipelineConfig(
             input_file=str(input_zip),
             failure_file=str(tmp_path / "failures.json"),
+            output_file=str(tmp_path / "subsidiaries.parquet"),
             num_workers=4,
         )
         assert config.num_workers == 4

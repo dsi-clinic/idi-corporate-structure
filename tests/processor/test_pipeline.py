@@ -7,6 +7,8 @@ import threading
 import zipfile
 from unittest.mock import MagicMock
 
+import pandas as pd
+
 from idi_corporate_structure.processor.failures import FailureType
 from idi_corporate_structure.processor.types import Filing, Subsidiary
 from tests.conftest import make_cik_json, make_directory_response, make_exhibit_response
@@ -719,3 +721,120 @@ class TestResultsWorker:
 
         results_queue.put([])
         results_queue.join()  # completes only if task_done() was called
+
+
+# ── save_output ───────────────────────────────────────────────────────────────
+
+
+class TestSaveOutput:
+    """Tests for SubsidiaryPipeline.save_output()."""
+
+    def _make_subsidiary(self, name: str, accession: str = "0000320193-24-000123") -> Subsidiary:
+        return Subsidiary(
+            parent_cik="0000320193",
+            parent_name="APPLE INC",
+            parent_location="CA",
+            name=name,
+            location="Ireland",
+            filing_date="2024-09-28",
+            form_type="10-K",
+            accession_number=accession,
+            exhibit_url="https://www.sec.gov/Archives/edgar/data/320193/ex21.htm",
+        )
+
+    def test_writes_parquet_file(self, pipeline):
+        subsidiaries = [self._make_subsidiary("Apple Operations International")]
+
+        pipeline.save_output(subsidiaries)
+
+        assert pipeline.config.output_file
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert len(df) == 1
+
+    def test_output_contains_all_subsidiary_fields(self, pipeline):
+        subsidiaries = [self._make_subsidiary("Apple Sales International")]
+
+        pipeline.save_output(subsidiaries)
+
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert df.iloc[0]["name"] == "Apple Sales International"
+        assert df.iloc[0]["parent_cik"] == "0000320193"
+        assert df.iloc[0]["location"] == "Ireland"
+
+    def test_adds_date_added_column(self, pipeline):
+        subsidiaries = [self._make_subsidiary("Apple Operations International")]
+
+        pipeline.save_output(subsidiaries)
+
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert "date_added" in df.columns
+        assert df.iloc[0]["date_added"] is not None
+
+    def test_deduplicates_within_filing(self, pipeline):
+        """Same parent_cik + accession_number + name should be written once."""
+        subsidiaries = [
+            self._make_subsidiary("Apple Operations International"),
+            self._make_subsidiary("Apple Operations International"),
+        ]
+
+        pipeline.save_output(subsidiaries)
+
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert len(df) == 1
+
+    def test_keeps_same_name_across_different_filings(self, pipeline):
+        """Same subsidiary name in two different filings should produce two rows."""
+        subsidiaries = [
+            self._make_subsidiary(
+                "Apple Operations International", accession="0000320193-23-000001"
+            ),
+            self._make_subsidiary(
+                "Apple Operations International", accession="0000320193-24-000002"
+            ),
+        ]
+
+        pipeline.save_output(subsidiaries)
+
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert len(df) == 2
+
+
+# ── display_stats ─────────────────────────────────────────────────────────────
+
+
+class TestDisplayStats:
+    """Tests for SubsidiaryPipeline.display_stats()."""
+
+    def test_logs_filing_counts(self, pipeline):
+        pipeline.stats.increment("total_filing", 10)
+        pipeline.stats.increment("failed_filings", 2)
+
+        with MagicMock() as mock_logger:
+            pipeline.logger = mock_logger
+            pipeline.display_stats()
+
+        logged = " ".join(str(c) for c in mock_logger.info.call_args_list)
+        assert "10" in logged
+        assert "2" in logged
+
+    def test_logs_subsidiary_counts(self, pipeline):
+        pipeline.stats.increment("total_subsidiaries", 50)
+        pipeline.stats.increment("failed_subsidiaries", 3)
+
+        with MagicMock() as mock_logger:
+            pipeline.logger = mock_logger
+            pipeline.display_stats()
+
+        logged = " ".join(str(c) for c in mock_logger.info.call_args_list)
+        assert "50" in logged
+        assert "3" in logged
+
+    def test_logs_section_headers(self, pipeline):
+        with MagicMock() as mock_logger:
+            pipeline.logger = mock_logger
+            pipeline.display_stats()
+
+        logged_args = [call.args[0] for call in mock_logger.info.call_args_list]
+        assert any("Filings" in arg for arg in logged_args)
+        assert any("Subsidiaries" in arg for arg in logged_args)
+        assert any("=" in arg for arg in logged_args)

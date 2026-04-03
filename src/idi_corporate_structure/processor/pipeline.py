@@ -1,6 +1,7 @@
 """Pipeline for extracting subsidiary data from SEC 10-K Exhibit 21 filings."""
 
 # Standard application imports
+import dataclasses
 import datetime
 import io
 import json
@@ -11,6 +12,7 @@ import zipfile
 from abc import ABC, abstractmethod
 
 # Third party imports
+import pandas as pd
 import pdfplumber
 from tqdm import tqdm
 
@@ -233,12 +235,9 @@ class SubsidiaryPipeline(Pipeline):
             namelist = zf.namelist()
             self.logger.info("Total # of files to process: %d", len(namelist))
 
-            count = 0
+            namelist = namelist[: self._INPUT_SAMPLE_SIZE]  # TODO: Remove after done testing
             for filename in tqdm(namelist):
                 filings.extend(self._parse_file(zf, filename))
-                count += 1
-                if count == self._INPUT_SAMPLE_SIZE:
-                    break
 
         return filings
 
@@ -476,16 +475,24 @@ class SubsidiaryPipeline(Pipeline):
 
     def save_output(self, processed_list: list[Subsidiary]) -> None:
         """Save subsidiary list output."""
+        df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
+        df = df.drop_duplicates(subset=["parent_cik", "accession_number", "name"])
+        df["date_added"] = datetime.datetime.now(datetime.UTC).isoformat()
+        df.to_parquet(self.config.output_file)
+        self.logger.info("Saved %d subsidiaries to %s", len(df), self.config.output_file)
 
     def display_stats(self) -> None:
         """Log pipeline stats on completion."""
-        self.logger.info(
-            "Stats: total_filings=%d failed_filings=%d total_subsidiaries=%d failed_subsidiaries=%d",
-            self.stats.total_filing,
-            self.stats.failed_filings,
-            self.stats.total_subsidiaries,
-            self.stats.failed_subsidiaries,
-        )
+        self.logger.info("=" * 40)
+        self.logger.info("Pipeline Stats")
+        self.logger.info("=" * 40)
+        self.logger.info("  Filings")
+        self.logger.info("    Total:    %d", self.stats.total_filing)
+        self.logger.info("    Failed:   %d", self.stats.failed_filings)
+        self.logger.info("  Subsidiaries")
+        self.logger.info("    Total:    %d", self.stats.total_subsidiaries)
+        self.logger.info("    Failed:   %d", self.stats.failed_subsidiaries)
+        self.logger.info("=" * 40)
 
     def run(self) -> None:
         """Run the pipeline, flushing any buffered failures on completion."""
@@ -505,6 +512,7 @@ if __name__ == "__main__":
         # input_file="https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip",
         input_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/input/submissions.zip",
         failure_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/failures/failures.json",
+        output_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/output/subsidiaries.parquet",
         rate_limit=0.2,
         num_workers=10,
     )

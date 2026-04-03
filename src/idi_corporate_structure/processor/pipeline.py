@@ -68,11 +68,9 @@ class Pipeline(ABC):
     def run(self) -> None:
         """Run the pipeline."""
         start_time = datetime.datetime.now()
-        input_data = self.load_input()
-        self.logger.info("Located %d input data items", len(input_data))
 
+        input_data = self.load_input()
         results = self.process(input_data)
-        self.logger.info("Located %d subsidiaries", len(results))
 
         self.save_output(results)
         self.display_stats()
@@ -240,11 +238,16 @@ class SubsidiaryPipeline(Pipeline):
         filings = []
         with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
             namelist = zf.namelist()
+            namelist = namelist[: self._INPUT_SAMPLE_SIZE]  # TODO: Remove after done testing
             self.logger.info("Total # of files to process: %d", len(namelist))
 
-            namelist = namelist[: self._INPUT_SAMPLE_SIZE]  # TODO: Remove after done testing
             for filename in tqdm(namelist):
-                filings.extend(self._parse_file(zf, filename))
+                filings_for_file = self._parse_file(zf, filename)
+                if filings_for_file:
+                    filings.extend(filings_for_file)
+
+        self.logger.info("Located %d filings for %d files", len(filings), len(namelist) - self.stats.skipped_filings)
+        self.logger.info("Skipped %d files", self.stats.skipped_filings)
 
         return filings
 
@@ -440,6 +443,7 @@ class SubsidiaryPipeline(Pipeline):
 
     def process(self, input_list: list[Filing]) -> list[Subsidiary]:
         """Process input filing list to retrieve subsidiary data."""
+        self.logger.info("Located %d subsidiaries", len(input_list))
         # Queues to store exhibit data and subsidiary data
         work_queue = queue.Queue(maxsize=self.config.num_workers * 2)
         result_queue = queue.Queue()
@@ -495,6 +499,7 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("=" * 40)
         self.logger.info("  Filings")
         self.logger.info("    Total:    %d", self.stats.total_filing)
+        self.logger.info("    Skipped:  %d", self.stats.skipped_filings)
         self.logger.info("    Failed:   %d", self.stats.failed_filings)
         self.logger.info("  Subsidiaries")
         self.logger.info("    Total:    %d", self.stats.total_subsidiaries)

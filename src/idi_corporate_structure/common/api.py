@@ -127,7 +127,7 @@ class ApiClient(ABC):
         Returns:
             The data from the API.
         """
-        response, error = None, None
+        response, error, error_exc = None, None, None
         try:
             response = (
                 self.get(url=url, params=params, headers=headers)
@@ -137,9 +137,13 @@ class ApiClient(ABC):
 
         except requests.exceptions.RequestException as e:
             error = f"Error querying {url}: {e}"
+            error_exc = e
             self.logger.error(error)
 
         response_data = {}
+        if isinstance(error_exc, requests.exceptions.HTTPError) and error_exc.response is not None:
+            response_data["status_code"] = error_exc.response.status_code
+
         if response is not None:
             try:
                 if return_bytes:

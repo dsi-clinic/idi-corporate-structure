@@ -68,13 +68,9 @@ class Pipeline(ABC):
     def run(self) -> None:
         """Run the pipeline."""
         start_time = datetime.datetime.now()
-        input_data = self.load_input()
-        self.logger.info("Located %d input data items", len(input_data))
 
+        input_data = self.load_input()
         results = self.process(input_data)
-        self.logger.info("Located %d subsidiaries", len(results))
-        for r in results:
-            print(r)
 
         self.save_output(results)
         self.display_stats()
@@ -89,8 +85,9 @@ class SubsidiaryPipeline(Pipeline):
     IS_10K = re.compile("10-?K")
     IS_DATE = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")
     TWENTYONE = re.compile("[^0-9]21")
+    IS_OVERFLOW = re.compile(r"-submissions-\d+\.json$")
 
-    _INPUT_SAMPLE_SIZE = 10  # TODO: Remove after done testing
+    _INPUT_SAMPLE_SIZE = 100  # TODO: Remove after done testing
     _SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
     def __init__(
@@ -106,18 +103,78 @@ class SubsidiaryPipeline(Pipeline):
         )
         self.rows = []
 
-    def _zip_file_data(self, data: dict, filename: str, cik: str) -> zip | None:
+    def _retrieve_overflow_filings(
+        self, data: dict, cik: str, zf: zipfile.ZipFile
+    ) -> tuple[list, list, list, list]:
+        """Retrieve overflow filings from the SEC submissions JSON.
+
+        Args:
+            data: Data to retrieve overflow filings from
+            cik: Identifier of file data was retrieved from
+            zf: Open ZipFile to read from.
+
+        Returns:
+            Tuple of lists of forms, accession numbers, primary documents, and filing dates.
+        """
+        forms = []
+        accession_numbers = []
+        primary_documents = []
+        filing_dates = []
+        for entry in data.get("filings", {}).get("files", []):
+            overflow_filename = entry.get("name", "")
+            if not overflow_filename:
+                continue
+
+            if (cik, overflow_filename) in self.failure_registry:
+                self.logger.debug(
+                    "Skipping overflow file — permanent failure recorded: %s", overflow_filename
+                )
+                self.stats.increment("skipped_filings")
+                continue
+
+            try:
+                with zf.open(overflow_filename) as of:
+                    overflow = json.load(of)
+
+                forms += overflow.get("form", [])
+                accession_numbers += overflow.get("accessionNumber", [])
+                primary_documents += overflow.get("primaryDocument", [])
+                filing_dates += overflow.get("filingDate", [])
+
+            except KeyError:
+                self.logger.error("Overflow file not found: %s", overflow_filename)
+                self.stats.increment("failed_filings")
+                self.failure_registry.add(
+                    (cik, overflow_filename), failure_type=FailureType.NO_OVERFLOW_FILINGS
+                )
+
+        return forms, accession_numbers, primary_documents, filing_dates
+
+    def _zip_file_data(
+        self, data: dict, filename: str, cik: str, zf: zipfile.ZipFile
+    ) -> zip | None:
         """Locate and returned zipped file data.
 
         Args:
             data: Data to retrieve specific file data from
             filename: Name of file data was retrieved from
             cik: Identifier of file data was retrieved from
+            zf: Open ZipFile to read from.
         """
+        # Retrieve recent filings
         forms = data.get("filings", {}).get("recent", {}).get("form", [])
         accession_numbers = data.get("filings", {}).get("recent", {}).get("accessionNumber", [])
         primary_documents = data.get("filings", {}).get("recent", {}).get("primaryDocument", [])
         filing_dates = data.get("filings", {}).get("recent", {}).get("filingDate", [])
+
+        # Retrieve overflow filings
+        o_forms, o_accession_numbers, o_primary_documents, o_filing_dates = (
+            self._retrieve_overflow_filings(data, cik, zf)
+        )
+        forms.extend(o_forms)
+        accession_numbers.extend(o_accession_numbers)
+        primary_documents.extend(o_primary_documents)
+        filing_dates.extend(o_filing_dates)
 
         if (
             len({len(forms), len(accession_numbers), len(primary_documents), len(filing_dates)})
@@ -125,16 +182,57 @@ class SubsidiaryPipeline(Pipeline):
         ):
             self.logger.error("Filename: %s has forms with mismatched data lengths.", filename)
             self.stats.increment("failed_filings")
-            self.failure_registry.add(cik, filename, failure_type=FailureType.MISMATCHED_LENGTHS)
+            self.failure_registry.add((cik, filename), failure_type=FailureType.MISMATCHED_LENGTHS)
             return None
 
         if not any([forms, accession_numbers, primary_documents, filing_dates]):
             self.logger.debug("Filename: %s has forms without data.", filename)
             self.stats.increment("failed_filings")
-            self.failure_registry.add(cik, filename, failure_type=FailureType.NO_FORM_DATA)
+            self.failure_registry.add((cik, filename), failure_type=FailureType.NO_FORM_DATA)
             return None
 
         return zip(forms, accession_numbers, primary_documents, filing_dates)
+
+    def _process_filings_zip(
+        self,
+        filings_zip: zip,
+        company_data: dict,
+        source_filename: str,
+    ) -> list[Filing]:
+        """Iterate a filings zip and collect 10-K Filing objects.
+
+        Args:
+            filings_zip: zip of (form, accession_number, primary_document, filing_date) tuples.
+            company_data: Dict with cik, name, location keys.
+            source_filename: Filename used for failure registry entries and debug logging.
+
+        Returns:
+            List of Filing objects for 10-K forms only.
+        """
+        filings = []
+        for form, accession_number, primary_document, filing_date in filings_zip:
+            if self.IS_10K.match(form):
+                filings.append(
+                    self._create_filing(
+                        accession_number=accession_number,
+                        primary_document=primary_document,
+                        filing_date=filing_date,
+                        form=form,
+                        company_data=company_data,
+                    )
+                )
+                self.stats.increment("total_filing")
+
+            else:
+                self.logger.debug("Filename: %s skipping non-10K form: %s.", source_filename, form)
+
+        if not filings:
+            self.stats.increment("failed_filings")
+            self.failure_registry.add(
+                (company_data["cik"], source_filename), failure_type=FailureType.NO_10K_FILINGS
+            )
+
+        return filings
 
     def _create_filing(
         self,
@@ -175,6 +273,7 @@ class SubsidiaryPipeline(Pipeline):
             primary_document=primary,
             company_name=company_data["name"],
             location=company_data["location"],
+            filename=company_data["filename"],
         )
 
     def _parse_file(self, zf: zipfile.ZipFile, filename: str) -> list[Filing]:
@@ -190,37 +289,36 @@ class SubsidiaryPipeline(Pipeline):
             List of Filing objects with form data
         """
         filings = []
-        if filename.startswith("CIK") and filename.endswith(".json"):
-            with zf.open(filename) as file:
-                data = json.load(file)
 
-            company_data = {
-                "cik": data.get("cik", ""),
-                "name": data.get("name", ""),
-                "location": data.get("stateOfIncorporation", ""),
-            }
-            filings_zip = self._zip_file_data(data, filename, company_data["cik"])
+        # Overflow files have no company metadata; loaded below with primary file
+        if self.IS_OVERFLOW.search(filename):
+            return filings
 
-            if filings_zip:
-                for form, accession_number, primary_document, filing_date in filings_zip:
-                    if self.IS_10K.match(form):
-                        filings.append(
-                            self._create_filing(
-                                accession_number=accession_number,
-                                primary_document=primary_document,
-                                filing_date=filing_date,
-                                form=form,
-                                company_data=company_data,
-                            )
-                        )
-                        self.stats.increment("total_filing")
+        if not (filename.startswith("CIK") and filename.endswith(".json")):
+            return filings
 
-                    else:
-                        self.logger.debug("Filename: %s does not have a 10K form.", filename)
-                        self.stats.increment("failed_filings")
-                        self.failure_registry.add(
-                            company_data["cik"], filename, failure_type=FailureType.NO_10K_FILINGS
-                        )
+        with zf.open(filename) as file:
+            data = json.load(file)
+
+        company_data = {
+            "cik": data.get("cik", ""),
+            "name": data.get("name", ""),
+            "location": data.get("stateOfIncorporation", ""),
+            "filename": filename,
+        }
+
+        # Skip files that had a permanent failure on a previous run
+        if (company_data["cik"], filename) in self.failure_registry:
+            self.logger.debug(
+                "Skipping permanent failure for filing: %s - %s", company_data["cik"], filename
+            )
+            self.stats.increment("skipped_filings")
+            return filings
+
+        # Process filings
+        filings_zip = self._zip_file_data(data, filename, company_data["cik"], zf)
+        if filings_zip:
+            filings.extend(self._process_filings_zip(filings_zip, company_data, filename))
 
         return filings
 
@@ -233,11 +331,20 @@ class SubsidiaryPipeline(Pipeline):
         filings = []
         with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
             namelist = zf.namelist()
+            namelist = namelist[: self._INPUT_SAMPLE_SIZE]  # TODO: Remove after done testing
             self.logger.info("Total # of files to process: %d", len(namelist))
 
-            namelist = namelist[: self._INPUT_SAMPLE_SIZE]  # TODO: Remove after done testing
-            for filename in tqdm(namelist):
-                filings.extend(self._parse_file(zf, filename))
+            for filename in tqdm(namelist, desc="Retrieving filings"):
+                filings_for_file = self._parse_file(zf, filename)
+                if filings_for_file:
+                    filings.extend(filings_for_file)
+
+        self.logger.info(
+            "Located %d filings for %d files",
+            len(filings),
+            len(namelist) - self.stats.skipped_filings,
+        )
+        self.logger.info("Skipped %d files", self.stats.skipped_filings)
 
         return filings
 
@@ -263,9 +370,7 @@ class SubsidiaryPipeline(Pipeline):
                     e,
                 )
                 self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(
-                    filing.cik, filing.accession_number, FailureType.DOCUMENT_ERROR
-                )
+                self.failure_registry.add((filing.cik, filing.filename), FailureType.DOCUMENT_ERROR)
 
             except Exception as _:
                 self.logger.error(
@@ -276,23 +381,33 @@ class SubsidiaryPipeline(Pipeline):
                 )
                 self.stats.increment("failed_subsidiaries")
                 self.failure_registry.add(
-                    filing.cik, filing.accession_number, FailureType.EXTRACTION_FAILED
+                    (filing.cik, filing.filename), FailureType.EXTRACTION_FAILED
                 )
 
             finally:
                 work_queue.task_done()
 
-    def _results_worker(self, results_queue: queue.Queue, subsidiaries: list[Subsidiary]) -> None:
+    def _results_worker(
+        self,
+        results_queue: queue.Queue,
+        subsidiaries: list[Subsidiary],
+        extract_bar: tqdm | None = None,
+    ) -> None:
         """Results worker for the pipeline.
 
         Args:
             results_queue: Queue of results
             subsidiaries: List of subsidiaries to add to
+            extract_bar: Optional tqdm progress bar to update on each completion.
         """
         while True:
             result = results_queue.get()
             subsidiaries.extend(result)
             self.stats.increment("total_subsidiaries", len(result))
+
+            if extract_bar is not None:
+                extract_bar.update(1)
+
             results_queue.task_done()
 
     def _fetch_directory(self, filing: Filing) -> list[dict]:
@@ -314,7 +429,7 @@ class SubsidiaryPipeline(Pipeline):
             )
             self.stats.increment("failed_subsidiaries")
             self.failure_registry.add(
-                filing.cik, filing.accession_number, FailureType.NO_FILING_DIRECTORY
+                (filing.cik, filing.filename), FailureType.NO_FILING_DIRECTORY
             )
             return []
         self.sec_client.rate_limit()
@@ -343,7 +458,7 @@ class SubsidiaryPipeline(Pipeline):
                 self.logger.error("Failed to extract PDF content: %s", sec_url)
                 self.stats.increment("failed_subsidiaries")
                 self.failure_registry.add(
-                    filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT
+                    (filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT
                 )
         return exhibit_content
 
@@ -370,9 +485,7 @@ class SubsidiaryPipeline(Pipeline):
                 filing.accession_number,
             )
             self.stats.increment("failed_subsidiaries")
-            self.failure_registry.add(
-                filing.cik, filing.accession_number, FailureType.NO_EXHIBIT_CONTENT
-            )
+            self.failure_registry.add((filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT)
         return exhibit_content
 
     def _fetch_exhibit_content(self, filing: Filing, item: dict) -> dict:
@@ -433,43 +546,51 @@ class SubsidiaryPipeline(Pipeline):
 
     def process(self, input_list: list[Filing]) -> list[Subsidiary]:
         """Process input filing list to retrieve subsidiary data."""
+        self.logger.info("Located %d subsidiaries", len(input_list))
         # Queues to store exhibit data and subsidiary data
         work_queue = queue.Queue(maxsize=self.config.num_workers * 2)
         result_queue = queue.Queue()
         subsidiaries = []
 
-        # Start extract and results workers
-        extract_workers = [
-            threading.Thread(
-                target=self._extract_worker,
-                args=(work_queue, result_queue),
+        with (
+            tqdm(
+                total=len(input_list), desc="Fetching exhibits", position=0, leave=True
+            ) as fetch_bar,
+            tqdm(total=0, desc="Extracting subsidiaries", position=1, leave=True) as extract_bar,
+        ):
+            # Start extract and results workers
+            extract_workers = [
+                threading.Thread(
+                    target=self._extract_worker,
+                    args=(work_queue, result_queue),
+                    daemon=True,
+                    name=f"extract-worker-{i}",
+                )
+                for i in range(self.config.num_workers)
+            ]
+            for worker in extract_workers:
+                worker.start()
+
+            results_worker = threading.Thread(
+                target=self._results_worker,
+                args=(result_queue, subsidiaries, extract_bar),
                 daemon=True,
-                name=f"extract-worker-{i}",
+                name="results-worker",
             )
-            for i in range(self.config.num_workers)
-        ]
-        for worker in extract_workers:
-            worker.start()
+            results_worker.start()
 
-        results_worker = threading.Thread(
-            target=self._results_worker,
-            args=(result_queue, subsidiaries),
-            daemon=True,
-            name="results-worker",
-        )
-        results_worker.start()
+            # SEC operations to fetch exhibit data — one task per document
+            for filing in input_list:
+                exhibit_contents = self._fetch_exhibit(filing)
+                for exhibit_content in exhibit_contents:
+                    work_queue.put((filing, exhibit_content))
+                    extract_bar.total += 1
+                    extract_bar.refresh()
+                fetch_bar.update(1)
 
-        # SEC operations to fetch exhibit data — one task per document
-        for filing in tqdm(input_list):
-            exhibit_contents = self._fetch_exhibit(filing)
-            for exhibit_content in exhibit_contents:
-                work_queue.put((filing, exhibit_content))
-
-        # Shutdown workers as all work is done
-        self.logger.info("Waiting on extract and results workers...")
-        work_queue.join()
-        result_queue.join()
-        self.logger.info("Extract and results workers finished.")
+            # Wait for all extraction to complete
+            work_queue.join()
+            result_queue.join()
 
         return subsidiaries
 
@@ -488,6 +609,7 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("=" * 40)
         self.logger.info("  Filings")
         self.logger.info("    Total:    %d", self.stats.total_filing)
+        self.logger.info("    Skipped:  %d", self.stats.skipped_filings)
         self.logger.info("    Failed:   %d", self.stats.failed_filings)
         self.logger.info("  Subsidiaries")
         self.logger.info("    Total:    %d", self.stats.total_subsidiaries)

@@ -4,8 +4,8 @@
 import json
 import tempfile
 import zipfile
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 # Third party imports
 import smart_open
@@ -70,10 +70,10 @@ def open_zip(file_path: str, headers: dict | None = None) -> Iterator[zipfile.Zi
     HTTPS requires the server to support range requests (Accept-Ranges: bytes).
 
     Args:
-        file_path: The path to the JSON file
+        file_path: The path to the JSON file.
+        headers: Optional HTTP headers passed as transport params (e.g. User-Agent for SEC EDGAR).
     """
-
-    tp = { "headers": headers } if headers else {}
+    tp = {"headers": headers} if headers else {}
     with smart_open.open(file_path, "rb", transport_params=tp) as f:
         with zipfile.ZipFile(f) as zf:
             yield zf

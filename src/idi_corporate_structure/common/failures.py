@@ -3,11 +3,11 @@
 # Standard library imports
 import json
 import pathlib
+import threading
 from abc import ABC, abstractmethod
 from enum import StrEnum
 
 # Application imports
-from idi_corporate_structure.common.logs import get_logger
 from idi_corporate_structure.common.storage import load_json, save_json
 
 _MIN_ENTRY_LEN = 2
@@ -39,6 +39,7 @@ class FailureClassifier(ABC):
 
         Args:
             response: API response dict with status_code and optional error.
+            **kwargs: Additional keyword arguments for subclass implementations.
 
         Returns:
             The classified failure type.
@@ -49,11 +50,14 @@ class FailureClassifier(ABC):
 class FailureRegistry:
     """Persists permanent failures to avoid retrying entities that will always fail."""
 
-    def __init__(self, file_path: str, classifier: FailureClassifier, flush_every: int = 10) -> None:
+    def __init__(
+        self, file_path: str, classifier: FailureClassifier, flush_every: int = 10
+    ) -> None:
         """Initialize the FailureRegistry.
 
         Args:
             file_path: Path to the JSON file for persistence.
+            classifier: Domain-specific failure classifier.
             flush_every: Number of new failures to buffer before writing to disk.
         """
         self.file_path = file_path
@@ -62,7 +66,7 @@ class FailureRegistry:
         self._pending = 0
         self._entries: set[tuple[str, str]] = set()
         self._reasons: dict[tuple[str, str], str] = {}
-        self.logger = get_logger("FailureRegistry")
+        self._lock = threading.RLock()
         self.load()
 
     def load(self) -> None:
@@ -92,7 +96,7 @@ class FailureRegistry:
         self._entries = {tuple(e) for e in entries_data if len(e) >= _MIN_ENTRY_LEN}
         self._reasons = {}
         for entry in self._entries:
-            key = f"{entry[0]} {entry[1]}"
+            key = " ".join(entry)
             if key in reasons_data:
                 self._reasons[entry] = reasons_data[key]
 
@@ -102,30 +106,29 @@ class FailureRegistry:
             return
 
         entries_list = [list(e) for e in self._entries]
-        reasons_dict = {f"{e[0]} {e[1]}": self._reasons.get(e, "") for e in self._entries}
+        reasons_dict = {" ".join(e): self._reasons.get(e, "") for e in self._entries}
         save_json(self.file_path, {"entries": entries_list, "reasons": reasons_dict})
 
-    def add(self, cik: str, accession_number: str, failure_type: StrEnum) -> None:
+    def add(self, key: tuple[str, str], failure_type: StrEnum) -> None:
         """Add a permanent failure entry.
 
         Args:
-            cik: The CIK of the filing entity.
-            accession_number: The accession number of the filing.
-            reason: Optional reason for debugging.
+            key: Tuple of identifier and associated file or relevant metadata.
+            failure_type: The classified failure type.
         """
         if self._classifier.is_retryable(failure_type):
             return
 
-        key = (cik, accession_number)
-        if key in self._entries:
-            return
+        with self._lock:
+            if key in self._entries:
+                return
 
-        self._entries.add(key)
-        self._reasons[key] = str(failure_type)
+            self._entries.add(key)
+            self._reasons[key] = str(failure_type)
 
-        self._pending += 1
-        if self._pending >= self._flush_every:
-            self.flush()
+            self._pending += 1
+            if self._pending >= self._flush_every:
+                self.flush()
 
     def flush(self) -> None:
         """Write all buffered failures to disk and reset the pending counter."""
@@ -136,7 +139,7 @@ class FailureRegistry:
         """Set-like membership check.
 
         Args:
-            key: Tuple of (cik, accession_number).
+            key: Tuple of identifier and associated file or relevant metadata.
 
         Returns:
             True if the filing should not be retried.

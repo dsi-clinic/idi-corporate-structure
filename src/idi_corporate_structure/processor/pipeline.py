@@ -316,7 +316,7 @@ class SubsidiaryPipeline(Pipeline):
             self.failure_registry.add(
                 filing.cik, filing.accession_number, FailureType.NO_FILING_DIRECTORY
             )
-            return {}
+            return []
         self.sec_client.rate_limit()
         return directory_response.get("data", {}).get("directory", {}).get("item", [])
 

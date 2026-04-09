@@ -66,7 +66,7 @@ class FailureRegistry:
         self._pending = 0
         self._entries: set[tuple[str, str]] = set()
         self._reasons: dict[tuple[str, str], str] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.load()
 
     def load(self) -> None:

@@ -62,9 +62,8 @@ class TestSecClientQueryEndpoint:
 
         assert "error" in result
 
-    def test_updates_last_request_timestamp(self):
+    def test_updates_last_request_timestamp_after_rate_limit(self):
         client = SecClient(rate_limit=0.0)
-        before = time.time()
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.url = "https://www.sec.gov/test"
@@ -73,7 +72,23 @@ class TestSecClientQueryEndpoint:
         with patch.object(client.session, "get", return_value=mock_response):
             client.query_endpoint("https://www.sec.gov/test")
 
+        before = time.time()
+        client.rate_limit()
+
         assert client._last_request >= before
+
+    def test_returns_bytes_when_return_bytes_true(self):
+        client = SecClient(rate_limit=0.0)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.url = "https://www.sec.gov/ex21.pdf"
+        mock_response.content = b"%PDF binary content"
+
+        with patch.object(client.session, "get", return_value=mock_response):
+            result = client.query_endpoint("https://www.sec.gov/ex21.pdf", return_bytes=True)
+
+        assert result["data"] == b"%PDF binary content"
+        assert isinstance(result["data"], bytes)
 
 
 class TestSecClientRateLimit:

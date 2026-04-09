@@ -1,7 +1,10 @@
 """Provides API utilities for use across the application."""
 
 # Standard library imports
+import contextlib
+import json
 import logging
+import threading
 import time
 from abc import ABC, abstractmethod
 from functools import cached_property
@@ -25,16 +28,41 @@ class ApiClient(ABC):
     RETRY_STATUS_FORCELIST: list[int] = [429, 500, 502, 503, 504]
     USER_AGENT: str = "idi-company-info"
 
-    def __init__(self, api_key: str = "", max_retries: int = DEFAULT_MAX_RETRIES) -> None:
+    def __init__(
+        self,
+        api_key: str = "",
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        rate_limit: float | None = None,
+    ) -> None:
         """Initialize the ApiClient.
 
         Args:
             api_key: The API key.
             max_retries: The maximum number of retries.
+            rate_limit: Minimum seconds between requests. None disables rate limiting.
         """
         self.api_key: str = api_key
         self.max_retries: int = max_retries if max_retries is not None else self.DEFAULT_MAX_RETRIES
         self.logger: logging.Logger = get_logger("ApiClient")
+        self._rate_limit = rate_limit
+        self._last_request = time.time()
+        self._lock: threading.Lock | contextlib.AbstractContextManager = (
+            threading.Lock() if rate_limit is not None else contextlib.nullcontext()
+        )
+
+    def rate_limit(self) -> None:
+        """Enforce rate limit between requests.
+
+        No-op when rate_limit was not set at construction time.
+        Thread-safe: serializes callers when rate_limit is configured.
+        """
+        if self._rate_limit is None:
+            return
+        with self._lock:
+            elapsed = time.time() - self._last_request
+            if elapsed < self._rate_limit:
+                time.sleep(self._rate_limit - elapsed)
+            self._last_request = time.time()
 
     @cached_property
     def session(self) -> requests.Session:
@@ -110,6 +138,7 @@ class ApiClient(ABC):
         headers: dict = None,
         method: Literal["get", "post"] = "get",
         return_json: bool = True,
+        return_bytes: bool = False,
     ) -> dict[str, Any]:
         """Query an endpoint with error handling.
 
@@ -120,11 +149,12 @@ class ApiClient(ABC):
             headers: The headers to pass to the API.
             method: The method to use to query the API.
             return_json: If True, parse response as JSON; otherwise return raw text.
+            return_bytes: If True, return raw response bytes (overrides return_json).
 
         Returns:
             The data from the API.
         """
-        response, error = None, None
+        response, error, error_exc = None, None, None
         try:
             response = (
                 self.get(url=url, params=params, headers=headers)
@@ -134,12 +164,18 @@ class ApiClient(ABC):
 
         except requests.exceptions.RequestException as e:
             error = f"Error querying {url}: {e}"
+            error_exc = e
             self.logger.error(error)
 
         response_data = {}
+        if isinstance(error_exc, requests.exceptions.HTTPError) and error_exc.response is not None:
+            response_data["status_code"] = error_exc.response.status_code
+
         if response is not None:
             try:
-                if return_json:
+                if return_bytes:
+                    r_data = response.content
+                elif return_json:
                     r_data = response.json()
                 else:
                     r_data = response.text
@@ -281,29 +317,71 @@ class SecClient(ApiClient):
         Args:
             rate_limit: How long to wait in between requests
         """
-        super().__init__()
-        self._last_request = time.time()
-        self._rate_limit = rate_limit
+        super().__init__(rate_limit=rate_limit)
 
-    def query_endpoint(self, sec_url: str, return_json: bool = True) -> dict:
+    def query_endpoint(
+        self, sec_url: str, return_json: bool = True, return_bytes: bool = False
+    ) -> dict:
         """Query SEC API endpoint.
 
         Args:
             sec_url: URL to query.
             return_json: If True, parse response as JSON; otherwise return raw text.
+            return_bytes: If True, return raw response bytes (overrides return_json).
 
         Returns:
             Response dict with status_code, url, and data keys.
         """
-        response = self._query_with_error_handling(
-            url=sec_url, headers=self.SEC_HEADERS, method="get", return_json=return_json
+        return self._query_with_error_handling(
+            url=sec_url,
+            headers=self.SEC_HEADERS,
+            method="get",
+            return_json=return_json,
+            return_bytes=return_bytes,
         )
-        self._last_request = time.time()
-        return response
 
-    def rate_limit(self) -> None:
-        """Enforce rate limit between requests (SEC limit: 10 requests/second)."""
-        elapsed = time.time() - self._last_request
-        if elapsed < self._rate_limit:
-            time.sleep(self._rate_limit - elapsed)
-        self._last_request = time.time()
+
+class OpenAiClient(ApiClient):
+    """API client for the OpenAI API."""
+
+    OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+
+    def __init__(self, api_key: str, rate_limit: float = 0.5) -> None:
+        """Initializes the OpenAI API.
+
+        Args:
+            api_key: The API key.
+            rate_limit: Minimum seconds between requests.
+        """
+        super().__init__(api_key=api_key, rate_limit=rate_limit)
+
+    def query_endpoint(
+        self,
+        data: str | dict = None,
+        return_json: bool = True,
+    ) -> dict:
+        """Query OpenAI API endpoint.
+
+        Args:
+            data: The data to post to the API.
+            return_json: If True, parse response as JSON; otherwise return raw text.
+
+        Returns:
+            Response dict with status_code, url, and data keys.
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+
+        if isinstance(data, dict):
+            data = json.dumps(data)
+
+        response = self._query_with_error_handling(
+            url=self.OPENAI_API_URL,
+            headers=headers,
+            method="post",
+            data=data,
+            return_json=return_json,
+        )
+        return response

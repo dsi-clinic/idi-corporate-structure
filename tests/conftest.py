@@ -18,9 +18,10 @@ def make_cik_json(
     accession_numbers: list | None = None,
     primary_documents: list | None = None,
     filing_dates: list | None = None,
+    cik: str = "",
 ) -> dict:
     """Build a minimal CIK JSON payload matching the SEC submissions.zip format."""
-    return {
+    payload: dict = {
         "filings": {
             "recent": {
                 "form": forms or [],
@@ -30,6 +31,9 @@ def make_cik_json(
             }
         }
     }
+    if cik:
+        payload["cik"] = cik
+    return payload
 
 
 def make_directory_response(items: list | None = None) -> dict:
@@ -63,6 +67,8 @@ def sample_filing() -> Filing:
         accession_number="0000320193-24-000123",
         directory="https://www.sec.gov/Archives/edgar/data/0000320193/000032019324000123/index.json",
         primary_document="https://www.sec.gov/Archives/edgar/data/0000320193/000032019324000123/aapl-20240928.htm",
+        company_name="APPLE INC",
+        location="CA",
     )
 
 
@@ -94,6 +100,7 @@ def pipeline(tmp_path, mock_sec_client, mock_extractor) -> SubsidiaryPipeline:
     config = PipelineConfig(
         input_file=str(input_zip),
         failure_file=str(tmp_path / "failures.json"),
+        output_file=str(tmp_path / "subsidiaries.parquet"),
         rate_limit=0.0,
         num_workers=2,
         failure_flush_every=100,

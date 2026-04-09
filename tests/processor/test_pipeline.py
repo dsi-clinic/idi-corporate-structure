@@ -7,6 +7,8 @@ import threading
 import zipfile
 from unittest.mock import MagicMock
 
+import pandas as pd
+
 from idi_corporate_structure.processor.failures import FailureType
 from idi_corporate_structure.processor.types import Filing, Subsidiary
 from tests.conftest import make_cik_json, make_directory_response, make_exhibit_response
@@ -24,7 +26,9 @@ class TestZipFileData:
             primary_documents=["doc1.htm", "doc2.htm"],
             filing_dates=["2024-09-28", "2024-06-30"],
         )
-        result = pipeline._zip_file_data(data, "CIK0000000001.json", "0000000001")
+        result = pipeline._zip_file_data(
+            data, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
 
         assert result is not None
         rows = list(result)
@@ -33,7 +37,9 @@ class TestZipFileData:
 
     def test_returns_none_for_empty_data(self, pipeline):
         data = make_cik_json()
-        result = pipeline._zip_file_data(data, "CIK0000000001.json", "0000000001")
+        result = pipeline._zip_file_data(
+            data, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
 
         assert result is None
 
@@ -44,7 +50,9 @@ class TestZipFileData:
             primary_documents=["doc1.htm", "doc2.htm"],
             filing_dates=["2024-09-28", "2024-06-30"],
         )
-        result = pipeline._zip_file_data(data, "CIK0000000001.json", "0000000001")
+        result = pipeline._zip_file_data(
+            data, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
 
         assert result is None
 
@@ -55,12 +63,16 @@ class TestZipFileData:
             primary_documents=["doc1.htm"],
             filing_dates=["2024-01-01"],
         )
-        pipeline._zip_file_data(data, "CIK0000000001.json", "0000000001")
+        pipeline._zip_file_data(
+            data, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
 
         assert pipeline.stats.failed_filings == 1
 
     def test_returns_none_for_missing_filings_key(self, pipeline):
-        result = pipeline._zip_file_data({}, "CIK0000000001.json", "0000000001")
+        result = pipeline._zip_file_data(
+            {}, "CIK0000000001.json", "0000000001", MagicMock(spec=zipfile.ZipFile)
+        )
         assert result is None
 
 
@@ -70,13 +82,20 @@ class TestZipFileData:
 class TestCreateFiling:
     """Tests for SubsidiaryPipeline._create_filing()."""
 
+    _COMPANY_DATA = {
+        "cik": "0000320193",
+        "name": "APPLE INC",
+        "location": "CA",
+        "filename": "CIK0000320193.json",
+    }
+
     def test_builds_directory_url(self, pipeline):
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="aapl-20240928.htm",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert (
             filing.directory
@@ -87,9 +106,9 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="doc.htm",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert "0000320193-24-000123" not in filing.directory
         assert "000032019324000123" in filing.directory
@@ -98,9 +117,9 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="aapl-20240928.htm",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert "aapl-20240928.htm" in filing.primary_document
 
@@ -108,9 +127,9 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="aapl-20240928.txt",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert filing.primary_document == ""
 
@@ -118,9 +137,9 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert filing.primary_document == ""
 
@@ -128,14 +147,16 @@ class TestCreateFiling:
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
             primary_document="doc.htm",
-            cik="0000320193",
             filing_date="2024-09-28",
             form="10-K",
+            company_data=self._COMPANY_DATA,
         )
         assert filing.cik == "0000320193"
         assert filing.filing_date == "2024-09-28"
         assert filing.form_type == "10-K"
         assert filing.accession_number == "0000320193-24-000123"
+        assert filing.company_name == "APPLE INC"
+        assert filing.location == "CA"
 
 
 # ── _parse_file ───────────────────────────────────────────────────────────────
@@ -158,6 +179,7 @@ class TestParseFile:
             accession_numbers=["ACC-10K", "ACC-10Q", "ACC-8K"],
             primary_documents=["10k.htm", "10q.htm", "8k.htm"],
             filing_dates=["2024-09-28", "2024-06-30", "2024-03-01"],
+            cik="0000000001",
         )
         mock_zf = self._make_zip_with_cik("CIK0000000001.json", data)
 
@@ -223,7 +245,37 @@ class TestParseFile:
 
         assert pipeline.stats.total_filing == 1
 
-    def test_strips_cik_prefix_from_filename(self, pipeline):
+    def test_reads_cik_from_json_data(self, pipeline):
+        data = make_cik_json(
+            forms=["10-K"],
+            accession_numbers=["ACC1"],
+            primary_documents=["doc.htm"],
+            filing_dates=["2024-01-01"],
+            cik="0000320193",
+        )
+        mock_zf = self._make_zip_with_cik("CIK0000320193.json", data)
+
+        filings = pipeline._parse_file(mock_zf, "CIK0000320193.json")
+
+        assert filings[0].cik == "0000320193"
+
+    def test_parses_company_name_and_location_from_json(self, pipeline):
+        data = make_cik_json(
+            forms=["10-K"],
+            accession_numbers=["ACC1"],
+            primary_documents=["doc.htm"],
+            filing_dates=["2024-01-01"],
+        )
+        data["name"] = "APPLE INC"
+        data["stateOfIncorporation"] = "CA"
+        mock_zf = self._make_zip_with_cik("CIK0000320193.json", data)
+
+        filings = pipeline._parse_file(mock_zf, "CIK0000320193.json")
+
+        assert filings[0].company_name == "APPLE INC"
+        assert filings[0].location == "CA"
+
+    def test_company_name_and_location_default_to_empty_string(self, pipeline):
         data = make_cik_json(
             forms=["10-K"],
             accession_numbers=["ACC1"],
@@ -234,7 +286,8 @@ class TestParseFile:
 
         filings = pipeline._parse_file(mock_zf, "CIK0000320193.json")
 
-        assert filings[0].cik == "0000320193"
+        assert filings[0].company_name == ""
+        assert filings[0].location == ""
 
 
 # ── _fetch_directory ──────────────────────────────────────────────────────────
@@ -306,7 +359,8 @@ class TestFetchExhibitContent:
 
         result = pipeline._fetch_exhibit_content(sample_filing, item)
 
-        assert result["status_code"] == 200
+        assert result["url"] is not None
+        assert result["data"] == make_exhibit_response()["data"]
         pipeline.sec_client.query_endpoint.assert_called_once()
 
     def test_fetches_exhibit_named_21_prefix(self, pipeline, sample_filing):
@@ -325,11 +379,17 @@ class TestFetchExhibitContent:
         assert result == {}
         pipeline.sec_client.query_endpoint.assert_not_called()
 
+    def test_skips_unsupported_file_type(self, pipeline, sample_filing):
+        item = {"name": "d12345ex21.xml", "type": "text.gif"}
+
+        result = pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert result == {}
+        pipeline.sec_client.query_endpoint.assert_not_called()
+
     def test_returns_empty_when_no_content_returned(self, pipeline, sample_filing):
-        # Use a filename that matches the exhibit regex so query_endpoint is called,
-        # then return an empty/falsy response to trigger the no-content failure path.
         item = {"name": "d12345ex21.htm", "type": "text.gif"}
-        pipeline.sec_client.query_endpoint.return_value = {}  # falsy → no content
+        pipeline.sec_client.query_endpoint.return_value = {}  # no data key
 
         result = pipeline._fetch_exhibit_content(sample_filing, item)
 
@@ -364,6 +424,57 @@ class TestFetchExhibitContent:
         assert "d12345ex21.htm" in called_url
         assert "-" not in called_url.split("/")[-2]  # accession number has no dashes
 
+    def test_fetches_pdf_exhibit_and_extracts_text(self, pipeline, sample_filing, mocker):
+        item = {"name": "d12345ex21.pdf", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = {"data": b"%PDF content"}
+
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "Subsidiary A — Delaware"
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = lambda s: s
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_pdf.pages = [mock_page]
+        mocker.patch(
+            "idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf
+        )
+
+        result = pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert result["data"] == "Subsidiary A — Delaware"
+        assert "d12345ex21.pdf" in result["url"]
+
+    def test_logs_warning_for_pdf_exhibit(self, pipeline, sample_filing, mocker):
+        item = {"name": "d12345ex21.pdf", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = {"data": b"%PDF content"}
+
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "text"
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = lambda s: s
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_pdf.pages = [mock_page]
+        mocker.patch(
+            "idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf
+        )
+
+        mock_warn = mocker.patch.object(pipeline.logger, "warning")
+        pipeline._fetch_exhibit_content(sample_filing, item)
+
+        mock_warn.assert_called_once()
+
+    def test_records_failure_on_pdf_extraction_error(self, pipeline, sample_filing, mocker):
+        item = {"name": "d12345ex21.pdf", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = {"data": b"%PDF content"}
+        mocker.patch(
+            "idi_corporate_structure.processor.pipeline.pdfplumber.open",
+            side_effect=Exception("corrupt PDF"),
+        )
+
+        result = pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert result == {}
+        assert pipeline.stats.failed_subsidiaries == 1
+
 
 # ── _fetch_exhibit ────────────────────────────────────────────────────────────
 
@@ -386,7 +497,7 @@ class TestFetchExhibit:
         result = pipeline._fetch_exhibit(sample_filing)
 
         assert len(result) == 1
-        assert result[0]["status_code"] == 200
+        assert result[0]["url"] is not None
 
     def test_returns_empty_list_when_directory_empty(self, pipeline, sample_filing, mocker):
         mocker.patch.object(pipeline, "_fetch_directory", return_value=[])
@@ -506,10 +617,10 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [exhibit]))
+        work_queue.put((sample_filing, exhibit))
         work_queue.join()
 
-        pipeline.extractor.extract.assert_called_once_with(sample_filing, [exhibit])
+        pipeline.extractor.extract.assert_called_once_with(sample_filing, exhibit)
 
     def test_puts_result_on_results_queue(self, pipeline, sample_filing):
         subsidiary = Subsidiary(
@@ -526,7 +637,7 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()
 
         assert results_queue.get_nowait() == [subsidiary]
@@ -535,7 +646,7 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, []))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()  # completes only if task_done() was called
 
     def test_marks_work_task_done_on_exception(self, pipeline, sample_filing):
@@ -544,7 +655,7 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()  # completes only if task_done() is called in finally
 
     def test_increments_failed_subsidiaries_on_exception(self, pipeline, sample_filing):
@@ -553,7 +664,7 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()
 
         assert pipeline.stats.failed_subsidiaries == 1
@@ -565,11 +676,11 @@ class TestExtractWorker:
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
 
-        work_queue.put((sample_filing, [make_exhibit_response()]))
+        work_queue.put((sample_filing, make_exhibit_response()))
         work_queue.join()
 
         spy.assert_called_once_with(
-            sample_filing.cik, sample_filing.accession_number, FailureType.EXTRACTION_FAILED
+            (sample_filing.cik, sample_filing.filename), FailureType.EXTRACTION_FAILED
         )
 
 
@@ -625,3 +736,120 @@ class TestResultsWorker:
 
         results_queue.put([])
         results_queue.join()  # completes only if task_done() was called
+
+
+# ── save_output ───────────────────────────────────────────────────────────────
+
+
+class TestSaveOutput:
+    """Tests for SubsidiaryPipeline.save_output()."""
+
+    def _make_subsidiary(self, name: str, accession: str = "0000320193-24-000123") -> Subsidiary:
+        return Subsidiary(
+            parent_cik="0000320193",
+            parent_name="APPLE INC",
+            parent_location="CA",
+            name=name,
+            location="Ireland",
+            filing_date="2024-09-28",
+            form_type="10-K",
+            accession_number=accession,
+            exhibit_url="https://www.sec.gov/Archives/edgar/data/320193/ex21.htm",
+        )
+
+    def test_writes_parquet_file(self, pipeline):
+        subsidiaries = [self._make_subsidiary("Apple Operations International")]
+
+        pipeline.save_output(subsidiaries)
+
+        assert pipeline.config.output_file
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert len(df) == 1
+
+    def test_output_contains_all_subsidiary_fields(self, pipeline):
+        subsidiaries = [self._make_subsidiary("Apple Sales International")]
+
+        pipeline.save_output(subsidiaries)
+
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert df.iloc[0]["name"] == "Apple Sales International"
+        assert df.iloc[0]["parent_cik"] == "0000320193"
+        assert df.iloc[0]["location"] == "Ireland"
+
+    def test_adds_date_added_column(self, pipeline):
+        subsidiaries = [self._make_subsidiary("Apple Operations International")]
+
+        pipeline.save_output(subsidiaries)
+
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert "date_added" in df.columns
+        assert df.iloc[0]["date_added"] is not None
+
+    def test_deduplicates_within_filing(self, pipeline):
+        """Same parent_cik + accession_number + name should be written once."""
+        subsidiaries = [
+            self._make_subsidiary("Apple Operations International"),
+            self._make_subsidiary("Apple Operations International"),
+        ]
+
+        pipeline.save_output(subsidiaries)
+
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert len(df) == 1
+
+    def test_keeps_same_name_across_different_filings(self, pipeline):
+        """Same subsidiary name in two different filings should produce two rows."""
+        subsidiaries = [
+            self._make_subsidiary(
+                "Apple Operations International", accession="0000320193-23-000001"
+            ),
+            self._make_subsidiary(
+                "Apple Operations International", accession="0000320193-24-000002"
+            ),
+        ]
+
+        pipeline.save_output(subsidiaries)
+
+        df = pd.read_parquet(pipeline.config.output_file)
+        assert len(df) == 2
+
+
+# ── display_stats ─────────────────────────────────────────────────────────────
+
+
+class TestDisplayStats:
+    """Tests for SubsidiaryPipeline.display_stats()."""
+
+    def test_logs_filing_counts(self, pipeline):
+        pipeline.stats.increment("total_filing", 10)
+        pipeline.stats.increment("failed_filings", 2)
+
+        with MagicMock() as mock_logger:
+            pipeline.logger = mock_logger
+            pipeline.display_stats()
+
+        logged = " ".join(str(c) for c in mock_logger.info.call_args_list)
+        assert "10" in logged
+        assert "2" in logged
+
+    def test_logs_subsidiary_counts(self, pipeline):
+        pipeline.stats.increment("total_subsidiaries", 50)
+        pipeline.stats.increment("failed_subsidiaries", 3)
+
+        with MagicMock() as mock_logger:
+            pipeline.logger = mock_logger
+            pipeline.display_stats()
+
+        logged = " ".join(str(c) for c in mock_logger.info.call_args_list)
+        assert "50" in logged
+        assert "3" in logged
+
+    def test_logs_section_headers(self, pipeline):
+        with MagicMock() as mock_logger:
+            pipeline.logger = mock_logger
+            pipeline.display_stats()
+
+        logged_args = [call.args[0] for call in mock_logger.info.call_args_list]
+        assert any("Filings" in arg for arg in logged_args)
+        assert any("Subsidiaries" in arg for arg in logged_args)
+        assert any("=" in arg for arg in logged_args)

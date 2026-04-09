@@ -24,6 +24,7 @@ class Filing:
     primary_document: str
     company_name: str = ""
     location: str = ""
+    filename: str = ""
 
 
 @dataclass
@@ -32,6 +33,7 @@ class PipelineConfig:
 
     input_file: str
     failure_file: str
+    output_file: str
     failure_flush_every: int = 50
     rate_limit: float = 0.1
     num_workers: int = 10
@@ -41,9 +43,9 @@ class PipelineConfig:
         if _is_local(self.input_file) and not pathlib.Path(self.input_file).exists():
             raise FileNotFoundError(f"Input file not found: {self.input_file}")
         if _is_local(self.failure_file) and not pathlib.Path(self.failure_file).parent.exists():
-            raise FileNotFoundError(
-                f"Failure file directory does not exist: {pathlib.Path(self.failure_file).parent}"
-            )
+            pathlib.Path(self.failure_file).parent.mkdir(parents=True, exist_ok=True)
+        if _is_local(self.output_file) and not pathlib.Path(self.output_file).parent.exists():
+            pathlib.Path(self.output_file).parent.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass

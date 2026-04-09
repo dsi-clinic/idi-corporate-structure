@@ -100,6 +100,7 @@ def pipeline(tmp_path, mock_sec_client, mock_extractor) -> SubsidiaryPipeline:
     config = PipelineConfig(
         input_file=str(input_zip),
         failure_file=str(tmp_path / "failures.json"),
+        output_file=str(tmp_path / "subsidiaries.parquet"),
         rate_limit=0.0,
         num_workers=2,
         failure_flush_every=100,

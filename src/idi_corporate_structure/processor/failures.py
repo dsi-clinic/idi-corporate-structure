@@ -18,6 +18,7 @@ class FailureType(StrEnum):
     MISMATCHED_LENGTHS = "mismatched_lengths"  # Parallel filing arrays have unequal lengths
     NO_FORM_DATA = "no_form_data"  # Filing arrays have no data
     NO_10K_FILINGS = "no_10k_filings"  # CIK exists but has no 10-K forms
+    NO_OVERFLOW_FILINGS = "no_overflow_filings"  # CIK exists but has no overflow filings
     NO_FILING_DIRECTORY = (
         "no_filing_directory"  # SEC queried filing but no directory listing was found
     )
@@ -39,6 +40,7 @@ class CorporateStructureFailureClassifier(FailureClassifier):
             FailureType.NO_EXHIBIT_CONTENT,
             FailureType.NO_FILING_DIRECTORY,
             FailureType.DOCUMENT_ERROR,
+            FailureType.NO_OVERFLOW_FILINGS,
         }
     )
 

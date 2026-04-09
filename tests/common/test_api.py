@@ -75,6 +75,19 @@ class TestSecClientQueryEndpoint:
 
         assert client._last_request >= before
 
+    def test_returns_bytes_when_return_bytes_true(self):
+        client = SecClient(rate_limit=0.0)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.url = "https://www.sec.gov/ex21.pdf"
+        mock_response.content = b"%PDF binary content"
+
+        with patch.object(client.session, "get", return_value=mock_response):
+            result = client.query_endpoint("https://www.sec.gov/ex21.pdf", return_bytes=True)
+
+        assert result["data"] == b"%PDF binary content"
+        assert isinstance(result["data"], bytes)
+
 
 class TestSecClientRateLimit:
     """Tests for SecClient.rate_limit()."""

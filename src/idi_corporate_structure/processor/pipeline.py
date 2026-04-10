@@ -729,30 +729,3 @@ class SubsidiaryPipeline(Pipeline):
             super().run()
         finally:
             self.failure_registry.flush()
-
-
-if __name__ == "__main__":
-    # uv run python3 -m src.idi_corporate_structure.processor.pipeline
-    import datetime
-
-    start = datetime.datetime.now()
-
-    config = PipelineConfig(
-        # input_file="https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip",
-        input_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/input/submissions.zip",
-        failure_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/failures/failures.json",
-        output_file="/Users/ntebaldi/Documents/workspace/11hour/ftm2j/data/corporate-struct/output/subsidiaries.parquet",
-        rate_limit=0.2,
-        num_workers=10,
-    )
-
-    sec_client = SecClient(config.rate_limit)
-
-    extractor = GptExtractor()
-
-    sub_pipeline = SubsidiaryPipeline(config=config, sec_client=sec_client, extractor=extractor)
-
-    sub_pipeline.run()
-
-    end = datetime.datetime.now()
-    print(f"Elasped time: {end - start}")

@@ -56,16 +56,17 @@ AWS credentials are required only if using S3 paths for input or output.
 ### Run
 
 ```bash
-uv run python -m idi_corporate_structure.processor.pipeline
+uv run python3 -m src.idi_corporate_structure.processor.orchestrator \
+    --input-file "/local/input/submissions.zip" \
+    --output-file "/local/output/subsidiaries.parquet" \
+    --failure-file "/local/failures/failures.json" \
+    --openai-api-key "sk-proj-xxxxxxxxxxxxx" \
+    --rate-limit 0.2 \
+    --num-workers 10
 ```
 
-The `submissions.zip` bulk data file is available from SEC EDGAR:
-
-```
-https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip
-```
-
-And can be read in via HTTP or local disk.
+- To read the `submissions.zip` file in via HTTP from SEC EDGAR, pass the following URL into the `--input-file` argument:
+    - `https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip`
 
 ### Configuration Reference
 

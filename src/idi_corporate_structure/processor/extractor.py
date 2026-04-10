@@ -37,7 +37,6 @@ class GptExtractor(Extractor):
     """Extracts subsidiaries from a single exhibit document using GPT."""
 
     _DOCUMENT_ERROR_STATUS_CODE = 400
-    _OPENAI_CLIENT = OpenAiClient(api_key=os.environ.get("OPENAI_API_KEY", ""))
     _SYSTEM_PROMPT = """
     Given a table of a company's subsidiaries (in Markdown or raw text, previously converted from PDF), format them as a JSON, like
 
@@ -53,6 +52,10 @@ class GptExtractor(Extractor):
 
     Include all of the subsidiaries, but ignore any nested structure and ignore any data unrelated to subsidiaries.
     """.strip()
+
+    def __init__(self, openai_api_key: str) -> None:
+        """Initialize the GPT extractor with the OpenAI API key."""
+        self._openai_client = OpenAiClient(api_key=openai_api_key)
 
     def _get_request_data_json(self, document: str) -> dict:
         """Build the OpenAI chat completions request payload for subsidiary extraction.
@@ -123,7 +126,7 @@ class GptExtractor(Extractor):
             RuntimeError: If the API returns any other error.
         """
         post_data = self._get_request_data_json(document)
-        response = self._OPENAI_CLIENT.query_endpoint(post_data)
+        response = self._openai_client.query_endpoint(post_data)
 
         if "error" in response:
             if response.get("status_code") == self._DOCUMENT_ERROR_STATUS_CODE:

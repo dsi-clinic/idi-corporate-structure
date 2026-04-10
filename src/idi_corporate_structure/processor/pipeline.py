@@ -5,6 +5,7 @@ import dataclasses
 import datetime
 import io
 import json
+import os
 import queue
 import re
 import threading
@@ -126,7 +127,7 @@ class SubsidiaryPipeline(Pipeline):
     TWENTYONE = re.compile("[^0-9]21")
     IS_OVERFLOW = re.compile(r"-submissions-\d+\.json$")
 
-    _INPUT_SAMPLE_SIZE = 100  # TODO: Remove after done testing
+    _INPUT_SAMPLE_SIZE = int(os.environ.get("INPUT_SAMPLE_SIZE", 0))
     _SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
     def __init__(
@@ -387,7 +388,8 @@ class SubsidiaryPipeline(Pipeline):
         filings = []
         with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
             namelist = zf.namelist()
-            namelist = namelist[: self._INPUT_SAMPLE_SIZE]  # TODO: Remove after done testing
+            if self._INPUT_SAMPLE_SIZE:
+                namelist = namelist[: self._INPUT_SAMPLE_SIZE]
             self.logger.info("Total # of files to process: %d", len(namelist))
 
             for filename in tqdm(namelist, desc="Retrieving filings"):

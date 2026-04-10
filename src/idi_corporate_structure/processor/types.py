@@ -47,7 +47,7 @@ class PipelineConfig:
     input_file: str
     failure_file: str
     output_file: str
-    openai_api_key: str
+    openai_api_key: str = ""
     failure_flush_every: int = 50
     rate_limit: float = 0.2
     num_workers: int = 10

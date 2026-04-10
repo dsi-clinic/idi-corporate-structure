@@ -68,6 +68,8 @@ uv run python3 -m src.idi_corporate_structure.processor.orchestrator \
 - To read the `submissions.zip` file in via HTTP from SEC EDGAR, pass the following URL into the `--input-file` argument:
     - `https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip`
 
+And can be read in via HTTP or local disk.
+
 ### Configuration Reference
 
 | Field | Default | Description |

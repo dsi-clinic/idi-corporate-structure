@@ -307,7 +307,7 @@ class TestFetchDirectory:
 
         assert result == items
 
-    def test_returns_empty_dict_when_no_directory_key(self, pipeline, sample_filing):
+    def test_returns_empty_list_when_no_directory_key(self, pipeline, sample_filing):
         pipeline.sec_client.query_endpoint.return_value = {
             "status_code": 200,
             "url": "https://...",
@@ -316,7 +316,7 @@ class TestFetchDirectory:
 
         result = pipeline._fetch_directory(sample_filing)
 
-        assert result == {}
+        assert result == []
 
     def test_records_failure_when_no_directory(self, pipeline, sample_filing):
         pipeline.sec_client.query_endpoint.return_value = {

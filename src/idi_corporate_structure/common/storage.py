@@ -22,10 +22,26 @@ def _empty_for_return_type(return_type: str) -> dict | list:
 
 
 def load_json(file_path: str, return_type: str = "dict") -> dict | list:
-    """Load a JSON file from the given path.
+    """Load a JSON file from a local path or S3 URL.
 
-    Supports local paths and s3:// URLs.
-    Returns empty dict/list if file does not exist; raises on other errors.
+    Supports any path scheme understood by ``smart_open`` (local, ``s3://``).
+    Missing files — locally absent or absent on S3 — are treated as empty and
+    return the appropriate empty container instead of raising.
+
+    Args:
+        file_path: Local filesystem path or ``s3://bucket/key`` URL of the JSON file.
+        return_type: Expected top-level type of the JSON document — ``"dict"`` or
+            ``"list"``. Controls the empty value returned when the file is absent.
+            Raises ``ValueError`` for any other value.
+
+    Returns:
+        Parsed JSON content as a ``dict`` or ``list``. Returns an empty ``dict`` or
+        ``list`` (per ``return_type``) when the file does not exist.
+
+    Raises:
+        ValueError: If ``return_type`` is not ``"dict"`` or ``"list"``.
+        botocore.exceptions.ClientError: If an S3 error other than ``NoSuchKey`` occurs.
+        json.JSONDecodeError: If the file exists but contains invalid JSON.
     """
     try:
         with smart_open.open(file_path) as f:
@@ -70,8 +86,19 @@ def open_zip(file_path: str, headers: dict | None = None) -> Iterator[zipfile.Zi
     HTTPS requires the server to support range requests (Accept-Ranges: bytes).
 
     Args:
-        file_path: The path to the JSON file.
-        headers: Optional HTTP headers passed as transport params (e.g. User-Agent for SEC EDGAR).
+        file_path: Path to the ZIP file — local filesystem path, ``s3://`` URL, or
+            ``https://`` URL. HTTPS requires the server to support range requests
+            (``Accept-Ranges: bytes``).
+        headers: Optional HTTP headers passed as transport params (e.g. ``User-Agent``
+            for SEC EDGAR). Ignored for local and S3 paths.
+
+    Yields:
+        An open ``zipfile.ZipFile`` object. The underlying stream is closed
+        automatically when the context manager exits.
+
+    Raises:
+        zipfile.BadZipFile: If the file is not a valid ZIP archive.
+        OSError: If the file cannot be opened or read.
     """
     tp = {"headers": headers} if headers else {}
     with smart_open.open(file_path, "rb", transport_params=tp) as f:

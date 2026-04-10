@@ -133,26 +133,31 @@ class ApiClient(ABC):
     def _query_with_error_handling(
         self,
         url: str,
-        data: str | dict = None,
-        params: dict = None,
-        headers: dict = None,
+        data: str | dict | None = None,
+        params: dict | None = None,
+        headers: dict | None = None,
         method: Literal["get", "post"] = "get",
         return_json: bool = True,
         return_bytes: bool = False,
     ) -> dict[str, Any]:
-        """Query an endpoint with error handling.
+        """Query an endpoint with error handling, capturing errors in the return value.
+
+        On success the returned dict contains ``status_code``, ``url``, and ``data`` keys.
+        On failure an ``error`` key is added; HTTP errors also include ``status_code``.
+        Exceptions are never re-raised — callers should check for the ``error`` key.
 
         Args:
             url: The URL to query.
-            data: The data to post to the API.
-            params: The parameters to pass to the API.
-            headers: The headers to pass to the API.
-            method: The method to use to query the API.
-            return_json: If True, parse response as JSON; otherwise return raw text.
-            return_bytes: If True, return raw response bytes (overrides return_json).
+            data: The data to post to the API. Only used when ``method`` is ``"post"``.
+            params: Query-string parameters to pass to the API.
+            headers: HTTP headers to pass to the API.
+            method: HTTP verb to use — ``"get"`` or ``"post"``.
+            return_json: If True, parse the response body as JSON; otherwise return raw text.
+            return_bytes: If True, return raw response bytes (overrides ``return_json``).
 
         Returns:
-            The data from the API.
+            Dict with ``status_code``, ``url``, and ``data`` keys on success.
+            On error, ``error`` is added and ``data`` may be absent.
         """
         response, error, error_exc = None, None, None
         try:
@@ -196,8 +201,20 @@ class ApiClient(ABC):
         return response_data
 
     @abstractmethod
-    def query_endpoint(self, **kwargs) -> dict[str, Any]:
-        """Query an endpoint."""
+    def query_endpoint(self, **kwargs: object) -> dict[str, Any]:
+        """Query the API endpoint specific to this client.
+
+        Subclasses define the exact positional/keyword parameters relevant to their
+        endpoint. The return dict follows the ``_query_with_error_handling`` contract:
+        ``status_code``, ``url``, and ``data`` on success; ``error`` on failure.
+
+        Args:
+            **kwargs: Endpoint-specific arguments defined by each subclass.
+
+        Returns:
+            Dict with ``status_code``, ``url``, and ``data`` on success, plus ``error``
+            on failure.
+        """
         ...
 
 
@@ -206,14 +223,15 @@ class LsegEntitySearch(ApiClient):
 
     ENTITY_SEARCH_URL = "https://api-eit.refinitiv.com/permid/search"
 
-    def query_endpoint(self, params: dict) -> dict:
+    def query_endpoint(self, params: dict) -> dict[str, Any]:
         """Query the LSEG Entity Search API.
 
         Args:
-            params: The parameters to pass to the API.
+            params: Query parameters to pass to the entity search endpoint.
 
         Returns:
-            The data from the API.
+            Dict with ``status_code``, ``url``, and ``data`` on success, plus ``error``
+            on failure.
         """
         headers = {
             "X-AG-Access-Token": self.api_key,
@@ -230,14 +248,15 @@ class LsegRecordMatch(ApiClient):
 
     RECORD_MATCH_URL = "https://api-eit.refinitiv.com/permid/match"
 
-    def query_endpoint(self, csv_data: str) -> dict:
+    def query_endpoint(self, csv_data: str) -> dict[str, Any]:
         """Query the LSEG Record Match API.
 
         Args:
-            csv_data: The CSV data to search for.
+            csv_data: CSV-formatted string of records to match against LSEG entity data.
 
         Returns:
-            The data from the API.
+            Dict with ``status_code``, ``url``, and ``data`` on success, plus ``error``
+            on failure.
         """
         headers = {
             "accept": "application/json",
@@ -255,14 +274,15 @@ class LsegRecordMatch(ApiClient):
 class LSEGEntityLookup(ApiClient):
     """API client for the LSEG Entity Lookup API."""
 
-    def query_endpoint(self, permid_url: str) -> dict:
+    def query_endpoint(self, permid_url: str) -> dict[str, Any]:
         """Query the LSEG Entity Lookup API.
 
         Args:
-            permid_url: The PermID URL to lookup.
+            permid_url: Full PermID URL to look up (e.g. ``https://permid.org/1-...``).
 
         Returns:
-            The data from the API.
+            Dict with ``status_code``, ``url``, and ``data`` on success, plus ``error``
+            on failure.
         """
         headers = {
             "X-AG-Access-Token": self.api_key,
@@ -289,11 +309,19 @@ class GeonamesApi(ApiClient):
         super().__init__(api_key=api_key)
         self.geonames_user = geonames_user
 
-    def query_endpoint(self, geoname_url: str) -> dict:
+    def query_endpoint(self, geoname_url: str) -> dict[str, Any]:
         """Query the Geonames API.
 
+        Extracts the numeric geoname ID from ``geoname_url`` and fetches the
+        corresponding record from the Geonames REST service.
+
         Args:
-            geoname_url: The Geonames URL to look up (e.g. http://sws.geonames.org/6252001/).
+            geoname_url: Geonames linked-data URL containing the numeric ID
+                (e.g. ``http://sws.geonames.org/6252001/``).
+
+        Returns:
+            Dict with ``status_code``, ``url``, and ``data`` on success, plus ``error``
+            on failure.
         """
         # Extract geoname ID from URL (e.g., http://sws.geonames.org/6252001/)
         geoname_id = geoname_url.rstrip("/").split("/")[-1]
@@ -321,16 +349,17 @@ class SecClient(ApiClient):
 
     def query_endpoint(
         self, sec_url: str, return_json: bool = True, return_bytes: bool = False
-    ) -> dict:
-        """Query SEC API endpoint.
+    ) -> dict[str, Any]:
+        """Query a SEC EDGAR endpoint with the required User-Agent header.
 
         Args:
-            sec_url: URL to query.
+            sec_url: Full SEC EDGAR URL to query.
             return_json: If True, parse response as JSON; otherwise return raw text.
-            return_bytes: If True, return raw response bytes (overrides return_json).
+            return_bytes: If True, return raw response bytes (overrides ``return_json``).
 
         Returns:
-            Response dict with status_code, url, and data keys.
+            Dict with ``status_code``, ``url``, and ``data`` on success, plus ``error``
+            on failure.
         """
         return self._query_with_error_handling(
             url=sec_url,
@@ -357,17 +386,21 @@ class OpenAiClient(ApiClient):
 
     def query_endpoint(
         self,
-        data: str | dict = None,
+        data: str | dict | None = None,
         return_json: bool = True,
-    ) -> dict:
-        """Query OpenAI API endpoint.
+    ) -> dict[str, Any]:
+        """Query the OpenAI chat completions endpoint.
+
+        If ``data`` is a dict it is serialized to JSON before being sent.
 
         Args:
-            data: The data to post to the API.
+            data: Request payload as a JSON string or a dict. Pass ``None`` to send
+                an empty body.
             return_json: If True, parse response as JSON; otherwise return raw text.
 
         Returns:
-            Response dict with status_code, url, and data keys.
+            Dict with ``status_code``, ``url``, and ``data`` on success, plus ``error``
+            on failure.
         """
         headers = {
             "Content-Type": "application/json",

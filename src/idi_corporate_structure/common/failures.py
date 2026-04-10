@@ -18,7 +18,7 @@ class FailureClassifier(ABC):
 
     @property
     @abstractmethod
-    def do_not_retry(self) -> frozenset:
+    def do_not_retry(self) -> frozenset[StrEnum]:
         """Return the set of failure types that should not be retried."""
         ...
 
@@ -34,7 +34,7 @@ class FailureClassifier(ABC):
         return failure_type not in self.do_not_retry
 
     @abstractmethod
-    def classify_from_response(self, response: dict, **kwargs) -> StrEnum:
+    def classify_from_response(self, response: dict, **kwargs: object) -> StrEnum:
         """Classify a failure from an API response.
 
         Args:
@@ -70,7 +70,19 @@ class FailureRegistry:
         self.load()
 
     def load(self) -> None:
-        """Load entries from the persistence file."""
+        """Load persisted failure entries from disk into memory.
+
+        If the file does not exist (locally or on S3), the registry is initialised
+        as empty. A ``json.JSONDecodeError`` from a corrupt file is silently caught
+        and the registry is reset to empty so the pipeline can continue.
+
+        Returns:
+            None
+
+        Raises:
+            botocore.exceptions.ClientError: If an S3 error other than ``NoSuchKey``
+                occurs when reading the persistence file.
+        """
         if not self.file_path or (
             not self.file_path.startswith("s3://") and not pathlib.Path(self.file_path).exists()
         ):
@@ -101,7 +113,15 @@ class FailureRegistry:
                 self._reasons[entry] = reasons_data[key]
 
     def save(self) -> None:
-        """Persist entries to the file."""
+        """Persist current failure entries and reasons to the configured file path.
+
+        Writes entries as a JSON object with ``entries`` (list of lists) and
+        ``reasons`` (dict keyed by space-joined entry tuples) keys. If
+        ``file_path`` is empty the call is a no-op.
+
+        Returns:
+            None
+        """
         if not self.file_path:
             return
 

@@ -40,7 +40,15 @@ class Pipeline(ABC):
     def __init__(
         self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
     ) -> None:
-        """Initialize the pipeline with config, SEC client, and extractor."""
+        """Initialize the pipeline with config, SEC client, and extractor.
+
+        Args:
+            config: Pipeline configuration including input/output paths and tuning
+                parameters.
+            sec_client: Configured SEC EDGAR API client used for fetching filings.
+            extractor: Extractor instance responsible for parsing subsidiary data
+                from exhibit documents.
+        """
         self.config = config
         self.extractor = extractor
         self.sec_client = sec_client
@@ -48,25 +56,56 @@ class Pipeline(ABC):
 
     @abstractmethod
     def load_input(self) -> list:
-        """Load input data and return a list of items to process."""
+        """Load input data and return a list of items to process.
+
+        Returns:
+            List of input items. The concrete element type is defined by each
+            subclass (e.g. ``list[Filing]``).
+        """
         ...
 
     @abstractmethod
     def process(self, input_list: list) -> list:
-        """Process each item in the input list and return a list of results."""
+        """Process each item in the input list and return a list of results.
+
+        Args:
+            input_list: Items returned by :meth:`load_input`.
+
+        Returns:
+            List of processed results. The concrete element type is defined by
+            each subclass (e.g. ``list[Subsidiary]``).
+        """
         ...
 
     @abstractmethod
     def save_output(self, processed_list: list) -> None:
-        """Saves processed items list."""
+        """Persist the processed results to the configured output destination.
+
+        Args:
+            processed_list: Items returned by :meth:`process`.
+
+        Returns:
+            None
+        """
         ...
 
     @abstractmethod
     def display_stats(self) -> None:
-        """Display processing stats."""
+        """Log or display a summary of pipeline processing statistics.
+
+        Returns:
+            None
+        """
 
     def run(self) -> None:
-        """Run the pipeline."""
+        """Execute the full pipeline: load → process → save → display stats.
+
+        Calls :meth:`load_input`, :meth:`process`, :meth:`save_output`, and
+        :meth:`display_stats` in sequence, then logs the total elapsed time.
+
+        Returns:
+            None
+        """
         start_time = datetime.datetime.now()
 
         input_data = self.load_input()
@@ -93,7 +132,14 @@ class SubsidiaryPipeline(Pipeline):
     def __init__(
         self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
     ) -> None:
-        """Initialize the subsidiary pipeline with failure registry."""
+        """Initialize the subsidiary pipeline with failure registry.
+
+        Args:
+            config: Pipeline configuration including input/output paths, rate limit,
+                worker count, and failure flush threshold.
+            sec_client: Configured SEC EDGAR API client.
+            extractor: Extractor used to parse subsidiary data from exhibit documents.
+        """
         super().__init__(config, sec_client, extractor)
         self.logger = get_logger("SubsidiaryPipeline")
         self.failure_registry = FailureRegistry(
@@ -153,13 +199,23 @@ class SubsidiaryPipeline(Pipeline):
     def _zip_file_data(
         self, data: dict, filename: str, cik: str, zf: zipfile.ZipFile
     ) -> zip | None:
-        """Locate and returned zipped file data.
+        """Locate and return zipped filing data for a single CIK JSON file.
+
+        Combines recent filings from ``data`` with any overflow filings referenced
+        in ``data["filings"]["files"]``, then validates that all four parallel lists
+        (forms, accession numbers, primary documents, filing dates) have the same
+        length before zipping them together.
 
         Args:
-            data: Data to retrieve specific file data from
-            filename: Name of file data was retrieved from
-            cik: Identifier of file data was retrieved from
-            zf: Open ZipFile to read from.
+            data: Parsed CIK submissions JSON with ``filings.recent`` and optionally
+                ``filings.files`` overflow references.
+            filename: Source filename, used for failure registry entries and logging.
+            cik: CIK identifier for the company, used for failure registry entries.
+            zf: Open :class:`zipfile.ZipFile` from which overflow files are read.
+
+        Returns:
+            A ``zip`` iterator of ``(form, accession_number, primary_document,
+            filing_date)`` tuples, or ``None`` if the data is missing or inconsistent.
         """
         # Retrieve recent filings
         forms = data.get("filings", {}).get("recent", {}).get("form", [])
@@ -349,11 +405,21 @@ class SubsidiaryPipeline(Pipeline):
         return filings
 
     def _extract_worker(self, work_queue: queue.Queue, results_queue: queue.Queue) -> None:
-        """Extract worker for the pipeline.
+        """Worker thread that extracts subsidiaries from queued exhibit documents.
+
+        Runs as a daemon thread, consuming ``(filing, exhibit_contents)`` tuples from
+        ``work_queue`` and posting extracted ``list[Subsidiary]`` results to
+        ``results_queue``. Extraction errors are caught, logged, and recorded in the
+        failure registry so the worker loop continues.
 
         Args:
-            work_queue: Queue of filings and exhibit contents
-            results_queue: Queue of results
+            work_queue: Queue of ``(Filing, dict)`` tuples to process. Each dict has
+                ``"url"`` and ``"data"`` keys for the exhibit content.
+            results_queue: Queue to which extracted ``list[Subsidiary]`` results are
+                posted.
+
+        Returns:
+            None
         """
         while True:
             filing, exhibit_contents = work_queue.get()
@@ -393,12 +459,22 @@ class SubsidiaryPipeline(Pipeline):
         subsidiaries: list[Subsidiary],
         extract_bar: tqdm | None = None,
     ) -> None:
-        """Results worker for the pipeline.
+        """Worker thread that collects extracted subsidiaries from the results queue.
+
+        Runs as a daemon thread, consuming ``list[Subsidiary]`` batches from
+        ``results_queue`` and appending them to the shared ``subsidiaries`` list.
+        Optionally advances a tqdm progress bar on each batch completion.
 
         Args:
-            results_queue: Queue of results
-            subsidiaries: List of subsidiaries to add to
-            extract_bar: Optional tqdm progress bar to update on each completion.
+            results_queue: Queue of ``list[Subsidiary]`` batches produced by
+                :meth:`_extract_worker`.
+            subsidiaries: Shared list to which extracted subsidiaries are appended.
+                Must be safe for single-threaded append (only this worker writes).
+            extract_bar: Optional tqdm progress bar incremented by one for each
+                completed extraction task.
+
+        Returns:
+            None
         """
         while True:
             result = results_queue.get()
@@ -545,7 +621,20 @@ class SubsidiaryPipeline(Pipeline):
         return exhibit_content
 
     def process(self, input_list: list[Filing]) -> list[Subsidiary]:
-        """Process input filing list to retrieve subsidiary data."""
+        """Fetch exhibit content and extract subsidiaries from each filing.
+
+        Exhibit fetching (SEC HTTP calls) runs on the main thread; extraction is
+        parallelised across :attr:`~PipelineConfig.num_workers` daemon threads.
+        Progress is reported via two tqdm bars (fetching and extraction).
+
+        Args:
+            input_list: List of :class:`Filing` objects returned by
+                :meth:`load_input`.
+
+        Returns:
+            Deduplicated list of :class:`Subsidiary` objects extracted across all
+            filings.
+        """
         self.logger.info("Located %d subsidiaries", len(input_list))
         # Queues to store exhibit data and subsidiary data
         work_queue = queue.Queue(maxsize=self.config.num_workers * 2)
@@ -595,7 +684,18 @@ class SubsidiaryPipeline(Pipeline):
         return subsidiaries
 
     def save_output(self, processed_list: list[Subsidiary]) -> None:
-        """Save subsidiary list output."""
+        """Deduplicate and persist extracted subsidiaries as a Parquet file.
+
+        Drops duplicate rows keyed on ``(parent_cik, accession_number, name)`` and
+        appends a UTC ``date_added`` timestamp column before writing.
+
+        Args:
+            processed_list: List of :class:`Subsidiary` objects returned by
+                :meth:`process`.
+
+        Returns:
+            None
+        """
         df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
         df = df.drop_duplicates(subset=["parent_cik", "accession_number", "name"])
         df["date_added"] = datetime.datetime.now(datetime.UTC).isoformat()
@@ -603,7 +703,14 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("Saved %d subsidiaries to %s", len(df), self.config.output_file)
 
     def display_stats(self) -> None:
-        """Log pipeline stats on completion."""
+        """Log a formatted summary of pipeline statistics on completion.
+
+        Writes filing totals (total, skipped, failed) and subsidiary totals
+        (total, failed) to the logger at INFO level.
+
+        Returns:
+            None
+        """
         self.logger.info("=" * 40)
         self.logger.info("Pipeline Stats")
         self.logger.info("=" * 40)

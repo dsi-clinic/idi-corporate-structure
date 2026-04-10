@@ -9,6 +9,19 @@ _REMOTE_SCHEMES = ("s3://", "https://", "http://", "gs://")
 
 
 def _is_local(path: str) -> bool:
+    """Return True if the path refers to a local filesystem location.
+
+    A path is considered remote when it begins with one of the known URI
+    schemes in ``_REMOTE_SCHEMES`` (``s3://``, ``https://``, ``http://``,
+    ``gs://``).
+
+    Args:
+        path: File path or URI string to test.
+
+    Returns:
+        True if the path does not start with a known remote scheme,
+        False otherwise.
+    """
     return not path.startswith(_REMOTE_SCHEMES)
 
 

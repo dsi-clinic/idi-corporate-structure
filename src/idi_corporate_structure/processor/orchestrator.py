@@ -16,6 +16,7 @@ from idi_corporate_structure.processor.extractor import GptExtractor
 from idi_corporate_structure.processor.pipeline import SubsidiaryPipeline
 from idi_corporate_structure.processor.types import PipelineConfig
 
+
 def get_args() -> argparse.Namespace:
     """Get command line arguments."""
     parser = argparse.ArgumentParser(description="Corporate Structure Pipeline Orchestrator")
@@ -27,9 +28,9 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=10, help="Number of workers")
     return parser.parse_args()
 
+
 def main() -> None:
     """Main function to run the pipeline orchestrator."""
-
     start = datetime.datetime.now()
     args = get_args()
 
@@ -48,6 +49,7 @@ def main() -> None:
 
     end = datetime.datetime.now()
     print(f"Elasped time: {end - start}")
+
 
 if __name__ == "__main__":
     main()

@@ -2,7 +2,6 @@
 
 # Standard imports
 import json
-import os
 from abc import ABC, abstractmethod
 
 # Application imports

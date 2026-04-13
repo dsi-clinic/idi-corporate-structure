@@ -9,6 +9,19 @@ _REMOTE_SCHEMES = ("s3://", "https://", "http://", "gs://")
 
 
 def _is_local(path: str) -> bool:
+    """Return True if the path refers to a local filesystem location.
+
+    A path is considered remote when it begins with one of the known URI
+    schemes in ``_REMOTE_SCHEMES`` (``s3://``, ``https://``, ``http://``,
+    ``gs://``).
+
+    Args:
+        path: File path or URI string to test.
+
+    Returns:
+        True if the path does not start with a known remote scheme,
+        False otherwise.
+    """
     return not path.startswith(_REMOTE_SCHEMES)
 
 
@@ -34,8 +47,9 @@ class PipelineConfig:
     input_file: str
     failure_file: str
     output_file: str
+    openai_api_key: str = ""
     failure_flush_every: int = 50
-    rate_limit: float = 0.1
+    rate_limit: float = 0.2
     num_workers: int = 10
 
     def __post_init__(self) -> None:

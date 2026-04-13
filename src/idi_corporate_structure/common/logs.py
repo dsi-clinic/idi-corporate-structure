@@ -81,7 +81,6 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
 
     Args:
         name: The logger name.
-
         level: The initial level. Defaults to 20 ("INFO").
 
     Returns:

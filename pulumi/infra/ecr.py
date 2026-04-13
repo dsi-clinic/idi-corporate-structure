@@ -19,6 +19,4 @@ ecr_repo = aws.ecr.Repository(
     force_delete=True,
 )
 
-orchestrator_image = ecr_registry.apply(
-    lambda r: f"{r}/{config.name_prefix}-orchestrator:latest"
-)
+orchestrator_image = ecr_registry.apply(lambda r: f"{r}/{config.name_prefix}-orchestrator:latest")

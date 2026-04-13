@@ -42,11 +42,10 @@ rate_limit = config.config.get("rate_limit") or "0.2"
 num_workers = config.config.get("num_workers") or "10"
 input_sample_size = config.config.get("input_sample_size") or "0"
 
-# Build S3 paths from externally managed bucket (name required in config)
-_bucket_name = config.config.require("bucket_name")
-input_file = "https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip"
-output_file = f"s3://{_bucket_name}/{config.app_name}/output/subsidiaries.parquet"
-failure_file = f"s3://{_bucket_name}/{config.app_name}/failures/failures.json"
+# Build S3 paths from externally managed bucket (name from config)
+input_file = config.config.require("input_file")
+output_file = f"s3://{config.bucket_name}/{config.app_name}/output/subsidiaries.parquet"
+failure_file = f"s3://{config.bucket_name}/{config.app_name}/failures/failures.json"
 
 # Container definition as JSON (required by aws.ecs.TaskDefinition)
 container_definitions = pulumi.Output.all(

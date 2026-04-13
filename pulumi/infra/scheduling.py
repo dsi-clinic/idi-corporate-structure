@@ -53,6 +53,7 @@ scheduler_policy = aws.iam.RolePolicy(
         task_execution_role_arn=iam.task_execution_role.arn,
         task_role_arn=iam.task_role.arn,
         dlq_arn=dlq.arn,
+        task_definition_arn=ecs.task_definition.arn,
     ).apply(
         lambda args: json.dumps(
             {
@@ -61,7 +62,7 @@ scheduler_policy = aws.iam.RolePolicy(
                     {
                         "Effect": "Allow",
                         "Action": "ecs:RunTask",
-                        "Resource": "*",
+                        "Resource": args["task_definition_arn"],
                     },
                     {
                         "Effect": "Allow",
@@ -91,7 +92,7 @@ schedule_enabled = (config.config.get("schedule_enabled") or "false") == "true"
 
 schedule = aws.scheduler.Schedule(
     "idi-schedule-corporate-structure",
-    name=f"{config.name_prefix}",
+    name=f"{config.name_prefix}-schedule",
     description="Triggers the corporate structure processor ECS task",
     schedule_expression=schedule_expression,
     flexible_time_window=aws.scheduler.ScheduleFlexibleTimeWindowArgs(

@@ -45,3 +45,7 @@ config:
 
   idi:bucket_name:
     description: S3 bucket name for pipeline input, output, and failures (created externally)
+
+  idi:input_file:
+    description: Input file path (S3 URI or HTTPS URL)
+    default: "https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip"

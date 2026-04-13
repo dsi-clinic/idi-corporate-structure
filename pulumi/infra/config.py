@@ -9,9 +9,10 @@ import pulumi
 # -----------------------------------------------------------------------------
 config = pulumi.Config("idi")
 project_name = pulumi.get_project()
-app_name = config.get("app_name")
+app_name = config.get("app_name") or "corporate-structure"
 stack_name = pulumi.get_stack()
 name_prefix = f"{project_name}-{stack_name}-{app_name}"
+bucket_name = config.require("bucket_name")
 
 # AWS
 aws_config = pulumi.Config("aws")

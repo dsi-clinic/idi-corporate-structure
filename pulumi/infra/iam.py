@@ -141,8 +141,7 @@ task_role = aws.iam.Role(
 
 # S3 policy — all pipeline files in one bucket (input/, output/, failures/)
 # Bucket is created externally; looked up by name from config
-_bucket_name = config.config.require("bucket_name")
-_bucket = aws.s3.get_bucket_output(bucket=_bucket_name)
+_bucket = aws.s3.get_bucket_output(bucket=config.bucket_name)
 
 task_s3_policy = aws.iam.RolePolicy(
     "idi-policy-ecs-task-s3",

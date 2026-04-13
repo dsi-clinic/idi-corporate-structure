@@ -79,7 +79,7 @@ class TestPipelineConfig:
 
         assert config.input_file == str(input_zip)
         assert config.num_workers == 10  # default
-        assert config.rate_limit == 0.1  # default
+        assert config.rate_limit == 0.2  # default
 
     def test_raises_when_input_file_missing(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="Input file not found"):

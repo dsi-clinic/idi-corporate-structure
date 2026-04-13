@@ -56,16 +56,17 @@ AWS credentials are required only if using S3 paths for input or output.
 ### Run
 
 ```bash
-uv run python -m idi_corporate_structure.processor.pipeline
+uv run python3 -m src.idi_corporate_structure.processor.orchestrator \
+    --input-file "/local/input/submissions.zip" \
+    --output-file "/local/output/subsidiaries.parquet" \
+    --failure-file "/local/failures/failures.json" \
+    --openai-api-key "sk-proj-xxxxxxxxxxxxx" \
+    --rate-limit 0.2 \
+    --num-workers 10
 ```
 
-The `submissions.zip` bulk data file is available from SEC EDGAR:
-
-```
-https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip
-```
-
-And can be read in via HTTP or local disk.
+- To read the `submissions.zip` file in via HTTP from SEC EDGAR, pass the following URL into the `--input-file` argument:
+    - `https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip`
 
 ### Configuration Reference
 
@@ -75,8 +76,74 @@ And can be read in via HTTP or local disk.
 | `output_file` | — | Required. Path for Parquet output (local or `s3://`) |
 | `failure_file` | — | Required. Path to failures JSON; parent directory created if missing |
 | `failure_flush_every` | `50` | Write failures to disk after every N new entries |
-| `rate_limit` | `0.1` | Seconds between SEC HTTP requests (SEC limit: 10 req/s) |
+| `rate_limit` | `0.2` | Seconds between SEC HTTP requests (SEC limit: 10 req/s) |
 | `num_workers` | `10` | Number of concurrent GPT extraction worker threads |
+
+---
+
+## Container Usage
+
+The pipeline ships with a multi-stage Dockerfile and Docker Compose files for running the orchestrator in a container.
+
+### Files
+
+| File | Purpose |
+|---|---|
+| `dockerfiles/Dockerfile.orchestrator` | Multi-stage `python:3.13-slim` image; non-root `pipeline` user |
+| `compose.yml` | Service definition; pulls image from registry |
+| `compose.override.yml` | Adds `build:` block for local development; merged automatically by `docker compose` |
+
+### Environment Variables
+
+All required variables must be set before running. Optional variables fall back to the listed defaults.
+
+#### Required
+
+| Variable | Description |
+|---|---|
+| `OPENAI_API_KEY` | OpenAI API key for GPT extraction |
+| `INPUT_MOUNT_SOURCE` | Host directory containing the input file (e.g. `/data/input`) |
+| `INPUT_FILE` | Container-side path to the input file (e.g. `/data/input/submissions.zip`); can be an `https://` URL instead of a local path, in which case `INPUT_MOUNT_SOURCE` is unused |
+| `OUTPUT_MOUNT_SOURCE` | Host directory for Parquet output (e.g. `/data/output`) |
+| `FAILURE_MOUNT_SOURCE` | Host directory for failures JSON (e.g. `/data/failures`) |
+| `LOG_DIR` | Host directory for log files (e.g. `/data/logs`) |
+
+#### Optional
+
+| Variable | Default | Description |
+|---|---|---|
+| `OUTPUT_FILE` | `/data/output/output.parquet` | Container-side path for Parquet output |
+| `FAILURE_FILE` | `/data/failures/failures.json` | Container-side path for failures JSON |
+| `RATE_LIMIT` | `0.2` | Seconds between SEC HTTP requests |
+| `NUM_WORKERS` | `10` | Number of concurrent GPT extraction worker threads |
+| `INPUT_SAMPLE_SIZE` | `0` | Limit input to N files for testing (`0` = no limit) |
+| `AWS_REGION` | `us-east-2` | AWS region for S3 and CloudWatch |
+| `CLOUDWATCH_LOGS_ENABLED` | `false` | Enable CloudWatch log shipping |
+| `ORCHESTRATOR_IMAGE` | `ghcr.io/dsi-clinic/idi-corporate-structure-orchestrator:latest` | Image to pull on EC2 (ignored when building locally) |
+
+### Run
+
+**Local — build from source and run:**
+
+```bash
+export OPENAI_API_KEY="sk-proj-xxxxxxxxxxxxx"
+export INPUT_MOUNT_SOURCE="/path/to/input"       # must contain submissions.zip
+export OUTPUT_MOUNT_SOURCE="/path/to/output"
+export FAILURE_MOUNT_SOURCE="/path/to/failures"
+export LOG_DIR="/path/to/logs"
+
+docker compose up --build orchestrator
+```
+
+`compose.override.yml` is merged automatically when running locally, which adds the `build:` block so the image is built from source rather than pulled.
+
+**Detached (background):**
+
+```bash
+docker compose up -d --build orchestrator
+docker compose logs -f orchestrator   # tail logs
+docker compose down                   # stop
+```
 
 ---
 

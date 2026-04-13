@@ -1,0 +1,46 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # Corporate structure pipeline
+  # ---------------------------------------------------------------------------
+  orchestrator:
+    image: ${ORCHESTRATOR_IMAGE:-ghcr.io/dsi-clinic/idi-corporate-structure-orchestrator:latest}
+    container_name: idi-corporate-structure-orchestrator
+
+    environment:
+      - AWS_REGION=${AWS_REGION:-us-east-2}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      - INPUT_FILE=${INPUT_FILE:-/data/input/submissions.zip}
+      - OUTPUT_FILE=${OUTPUT_FILE:-/data/output/subsidiaries.parquet}
+      - FAILURE_FILE=${FAILURE_FILE:-/data/failures/failures.json}
+      - RATE_LIMIT=${RATE_LIMIT:-0.2}
+      - NUM_WORKERS=${NUM_WORKERS:-10}
+      - CLOUDWATCH_LOGS_ENABLED=${CLOUDWATCH_LOGS_ENABLED:-false}
+      - INPUT_SAMPLE_SIZE=${INPUT_SAMPLE_SIZE:-0}
+
+    volumes:
+      - ${INPUT_MOUNT_SOURCE:?INPUT_MOUNT_SOURCE is required (host directory containing the input file)}:/data/input:ro
+      - ${OUTPUT_MOUNT_SOURCE:?OUTPUT_MOUNT_SOURCE is required (host directory for output files)}:/data/output
+      - ${FAILURE_MOUNT_SOURCE:?FAILURE_MOUNT_SOURCE is required (host directory for failure files)}:/data/failures
+      - ${LOG_DIR:?LOG_DIR is required (host directory for log files)}:/logs
+
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "python -m idi_corporate_structure.processor.orchestrator
+      --input-file $${INPUT_FILE:-/data/input/submissions.zip}
+      --output-file $${OUTPUT_FILE:-/data/output/subsidiaries.parquet}
+      --failure-file $${FAILURE_FILE:-/data/failures/failures.json}
+      --openai-api-key ${OPENAI_API_KEY}
+      --rate-limit ${RATE_LIMIT:-0.2}
+      --num-workers ${NUM_WORKERS:-10}
+      2>&1 | tee /logs/orchestrator_$(date +%Y%m%d_%H%M%S).log"
+
+    # Retry up to 3 times if the process exits with a non-zero code
+    restart: on-failure
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        compress: "true"

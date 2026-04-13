@@ -22,8 +22,9 @@ class TestGptExtractor:
     """Tests for GptExtractor.extract()."""
 
     def test_returns_subsidiaries_from_gpt_response(self, sample_filing, mocker):
+        extractor = GptExtractor(openai_api_key="fake-key")
         mocker.patch.object(
-            GptExtractor._OPENAI_CLIENT,
+            extractor._openai_client,
             "query_endpoint",
             return_value=_make_openai_response(
                 [
@@ -32,7 +33,6 @@ class TestGptExtractor:
                 ]
             ),
         )
-        extractor = GptExtractor()
         result = extractor.extract(sample_filing, make_exhibit_response())
 
         assert len(result) == 2
@@ -43,12 +43,12 @@ class TestGptExtractor:
         assert result[1].location == "Ireland"
 
     def test_subsidiary_filing_fields_preserved(self, sample_filing, mocker):
+        extractor = GptExtractor(openai_api_key="fake-key")
         mocker.patch.object(
-            GptExtractor._OPENAI_CLIENT,
+            extractor._openai_client,
             "query_endpoint",
             return_value=_make_openai_response([{"name": "Sub LLC", "in": "Delaware"}]),
         )
-        extractor = GptExtractor()
         result = extractor.extract(sample_filing, make_exhibit_response())
         s = result[0]
 
@@ -59,46 +59,46 @@ class TestGptExtractor:
         assert s.accession_number == sample_filing.accession_number
 
     def test_exhibit_url_from_document(self, sample_filing, mocker):
+        extractor = GptExtractor(openai_api_key="fake-key")
         mocker.patch.object(
-            GptExtractor._OPENAI_CLIENT,
+            extractor._openai_client,
             "query_endpoint",
             return_value=_make_openai_response([{"name": "Sub LLC", "in": "Delaware"}]),
         )
-        extractor = GptExtractor()
         document = make_exhibit_response()
         result = extractor.extract(sample_filing, document)
 
         assert result[0].exhibit_url == document["url"]
 
     def test_null_location_becomes_empty_string(self, sample_filing, mocker):
+        extractor = GptExtractor(openai_api_key="fake-key")
         mocker.patch.object(
-            GptExtractor._OPENAI_CLIENT,
+            extractor._openai_client,
             "query_endpoint",
             return_value=_make_openai_response([{"name": "Sub LLC", "in": None}]),
         )
-        extractor = GptExtractor()
         result = extractor.extract(sample_filing, make_exhibit_response())
 
         assert result[0].location == ""
 
     def test_returns_empty_list_for_no_subsidiaries(self, sample_filing, mocker):
+        extractor = GptExtractor(openai_api_key="fake-key")
         mocker.patch.object(
-            GptExtractor._OPENAI_CLIENT,
+            extractor._openai_client,
             "query_endpoint",
             return_value=_make_openai_response([]),
         )
-        extractor = GptExtractor()
         result = extractor.extract(sample_filing, make_exhibit_response())
 
         assert result == []
 
     def test_raises_on_api_error(self, sample_filing, mocker):
+        extractor = GptExtractor(openai_api_key="fake-key")
         mocker.patch.object(
-            GptExtractor._OPENAI_CLIENT,
+            extractor._openai_client,
             "query_endpoint",
             return_value={"error": "connection timeout"},
         )
-        extractor = GptExtractor()
 
         with pytest.raises(RuntimeError):
             extractor.extract(sample_filing, make_exhibit_response())

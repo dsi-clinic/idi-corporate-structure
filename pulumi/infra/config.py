@@ -25,6 +25,7 @@ def tags(extra: dict | None = None) -> dict:
         "project": project_name,
         "environment": stack_name,
         "managed_by": "Pulumi",
+        "app_name": app_name,
     }
     if extra:
         t.update(extra)

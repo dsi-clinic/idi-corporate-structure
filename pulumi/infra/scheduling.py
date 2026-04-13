@@ -106,6 +106,7 @@ schedule = aws.scheduler.Schedule(
             launch_type="FARGATE",
             platform_version="LATEST",
             enable_execute_command=True,
+            propagate_tags="TASK_DEFINITION",
             network_configuration=aws.scheduler.ScheduleTargetEcsParametersNetworkConfigurationArgs(
                 assign_public_ip=True,
                 subnets=[networking.primary_subnet_id],

@@ -1,0 +1,47 @@
+name: idi
+runtime: python
+description: AWS ECS infrastructure for IDI Corporate Structure Pipeline
+
+config:
+  aws:region:
+    description: AWS region to deploy to
+    value: us-east-2
+
+  idi:app_name:
+    description: Name of the application
+    default: "corporate-structure"
+
+  idi:openai_api_key:
+    description: OpenAI API key (stored as secret in AWS Secrets Manager)
+    secret: true
+
+  idi:cron_corporate_structure:
+    description: EventBridge cron schedule for the corporate structure processor
+    default: "cron(0 2 * * ? *)"
+
+  idi:cpu:
+    description: Fargate task CPU units (256, 512, 1024, 2048, 4096)
+    default: "1024"
+
+  idi:memory:
+    description: Fargate task memory in MiB (must be valid for chosen CPU)
+    default: "4096"
+
+  idi:rate_limit:
+    description: SEC API rate limit in seconds between requests
+    default: "0.2"
+
+  idi:num_workers:
+    description: Number of GPT extraction worker threads
+    default: "10"
+
+  idi:input_sample_size:
+    description: Number of filings to process (0 = all, >0 for testing)
+    default: "0"
+
+  idi:schedule_enabled:
+    description: Whether the EventBridge schedule is enabled
+    default: "false"
+
+  idi:bucket_name:
+    description: S3 bucket name for pipeline input, output, and failures (created externally)

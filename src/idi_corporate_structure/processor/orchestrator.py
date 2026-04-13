@@ -9,6 +9,7 @@ The orchestrator is responsible for running the pipeline.
 # Standard imports
 import argparse
 import datetime
+import os
 
 # Application imports
 from idi_corporate_structure.common.api import SecClient
@@ -23,7 +24,12 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--input-file", type=str, required=True, help="Input file path")
     parser.add_argument("--output-file", type=str, required=True, help="Output file path")
     parser.add_argument("--failure-file", type=str, required=True, help="Failure file path")
-    parser.add_argument("--openai-api-key", type=str, required=True, help="OpenAI API key")
+    parser.add_argument(
+        "--openai-api-key",
+        type=str,
+        default=os.environ.get("OPENAI_API_KEY"),
+        help="OpenAI API key (falls back to OPENAI_API_KEY env var)",
+    )
     parser.add_argument("--rate-limit", type=float, default=0.2, help="Rate limit")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of workers")
     return parser.parse_args()
@@ -33,6 +39,10 @@ def main() -> None:
     """Main function to run the pipeline orchestrator."""
     start = datetime.datetime.now()
     args = get_args()
+
+    if not args.openai_api_key:
+        msg = "OpenAI API key required via --openai-api-key or OPENAI_API_KEY env var"
+        raise SystemExit(msg)
 
     config = PipelineConfig(
         input_file=args.input_file,

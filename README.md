@@ -67,11 +67,6 @@ uv run python3 -m src.idi_corporate_structure.processor.orchestrator \
 
 - To read the `submissions.zip` file in via HTTP from SEC EDGAR, pass the following URL into the `--input-file` argument:
     - `https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip`
-<<<<<<< HEAD
-
-And can be read in via HTTP or local disk.
-=======
->>>>>>> becf0eb (Provide orchestration script to deal with configuration and execution of the pipeline)
 
 ### Configuration Reference
 
@@ -148,6 +143,130 @@ docker compose up --build orchestrator
 docker compose up -d --build orchestrator
 docker compose logs -f orchestrator   # tail logs
 docker compose down                   # stop
+```
+
+---
+
+## AWS ECS Architecture
+
+The pipeline runs as an **ECS Fargate task** scheduled by **EventBridge Scheduler**. Infrastructure is defined in `pulumi/` using Pulumi (Python).
+
+### Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| **Fargate** (not EC2) | No instance management — container runs and exits; portable image |
+| **EventBridge Scheduler** (not Step Functions) | Processors are independent; no workflow orchestration needed |
+| **Public subnet** (no NAT Gateway) | Task needs outbound internet for SEC EDGAR and OpenAI |
+| **`awslogs` driver only** | Captures all stdout/stderr; linked directly to the task in the ECS console; app-level CloudWatch handler disabled (`CLOUDWATCH_LOGS_ENABLED=false`) |
+| **ECR** | No pull credential configuration required for Fargate |
+
+### Resources
+
+| Module | Resources |
+|---|---|
+| `config.py` | Shared name prefix (`{project}-{stack}-{app}`), tags, AWS caller identity |
+| `networking.py` | Default VPC, single-AZ public subnet, egress-only security group |
+| `iam.py` | Task execution role (ECR pull, CloudWatch Logs, Secrets Manager) + task role (S3, ECS Exec) |
+| `ecr.py` | ECR repository + lifecycle policy (retains last 5 images) |
+| `ecs.py` | ECS cluster (Fargate, Container Insights), CloudWatch log group (30-day retention), task definition (1 vCPU / 4 GB) |
+| `secrets.py` | Secrets Manager secret for OpenAI API key; injected as `OPENAI_API_KEY` env var at task startup |
+| `scheduling.py` | EventBridge Scheduler (cron, starts disabled), SQS dead-letter queue for failed invocations, scheduler IAM role |
+
+### S3 File Layout
+
+All pipeline files live in a single externally-managed S3 bucket:
+
+```
+{bucket}/
+  {app}/
+    input/submissions.zip       ← input (or pass an HTTPS URL via config)
+    output/subsidiaries.parquet ← output
+    failures/failures.json      ← permanent failure registry
+```
+
+### Deployment
+
+```bash
+cd pulumi/
+
+# First-time setup
+uv run --group pulumi pulumi stack init dev
+uv run --group pulumi pulumi config set aws:region us-east-2
+uv run --group pulumi pulumi config set idi:bucket_name <bucket>
+uv run --group pulumi pulumi config set --secret idi:openai_api_key <key>
+
+# Deploy
+uv run --group pulumi pulumi up
+```
+
+#### Configuration Reference
+
+| Config | Default | Description |
+|---|---|---|
+| `aws:region` | `us-east-2` | AWS region |
+| `idi:app_name` | `corporate-structure` | Application name used in resource naming |
+| `idi:bucket_name` | — | S3 bucket for input, output, and failures (created externally) |
+| `idi:openai_api_key` | — | OpenAI API key (secret; stored in Secrets Manager) |
+| `idi:input_file` | SEC EDGAR HTTPS URL | Input file path (S3 URI or HTTPS URL) |
+| `idi:cron_corporate_structure` | `cron(0 2 * * ? *)` | EventBridge schedule expression |
+| `idi:schedule_enabled` | `false` | Enable the EventBridge schedule |
+| `idi:cpu` | `1024` | Fargate task CPU units |
+| `idi:memory` | `4096` | Fargate task memory (MiB) |
+| `idi:rate_limit` | `0.2` | Seconds between SEC API requests |
+| `idi:num_workers` | `10` | GPT extraction worker threads |
+| `idi:input_sample_size` | `0` | Filings to process (`0` = all; set `>0` for testing) |
+
+### Manual Task Execution
+
+```bash
+aws ecs run-task \
+    --cluster <cluster-name> \
+    --task-definition <task-definition> \
+    --launch-type FARGATE \
+    --propagate-tags TASK_DEFINITION \
+    --network-configuration "awsvpcConfiguration={subnets=[<subnet-id>],securityGroups=[<sg-id>],assignPublicIp=ENABLED}" \
+    --overrides '{
+        "containerOverrides": [{
+            "name": "corporate-structure-orchestrator",
+            "environment": [{"name": "INPUT_SAMPLE_SIZE", "value": "5"}]
+        }]
+    }'
+```
+
+Use `pulumi stack output` to retrieve cluster name, subnet ID, and security group ID.
+
+### Monitoring
+
+- **Logs**: CloudWatch → Log groups → `/ecs/{name_prefix}` → stream per task run
+- **ECS console**: Tasks tab shows stopped tasks for up to 1 hour after completion
+- **Scheduling failures**: Check the SQS dead-letter queue (`pulumi stack output dlq_url`)
+- **ECS Exec** (interactive debug into running task):
+  ```bash
+  aws ecs execute-command \
+    --cluster <cluster> \
+    --task <task-id> \
+    --container corporate-structure-orchestrator \
+    --interactive \
+    --command "/bin/sh"
+  ```
+
+### Building and Pushing the Container Image
+
+```bash
+# Set ECR repo URL
+ECR_REPO=$(cd pulumi && uv run --group pulumi pulumi stack output ecr_repo_url)
+
+# Authenticate Docker to ECR
+aws ecr get-login-password --region us-east-2 | \
+  docker login --username AWS --password-stdin \
+  $(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-2.amazonaws.com
+
+# Build for linux/amd64 (required on Apple Silicon) and push
+docker buildx build --platform linux/amd64 \
+  -f dockerfiles/Dockerfile.orchestrator \
+  -t $ECR_REPO \
+  --push .
 ```
 
 ---

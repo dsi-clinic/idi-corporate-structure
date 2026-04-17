@@ -615,6 +615,7 @@ class TestProcess:
             location="Delaware",
             filing_date="2024-09-28",
             form_type="10-K",
+            exhibit_type="21",
             accession_number="ACC001",
             exhibit_url="https://example.com/ex21.htm",
         )
@@ -705,6 +706,7 @@ class TestExtractWorker:
             location="",
             filing_date=sample_filing.filing_date,
             form_type=sample_filing.form_type,
+            exhibit_type=sample_filing.exhibit_type,
             accession_number=sample_filing.accession_number,
             exhibit_url="",
         )
@@ -773,6 +775,7 @@ class TestResultsWorker:
             location="Delaware",
             filing_date=filing.filing_date,
             form_type=filing.form_type,
+            exhibit_type=filing.exhibit_type,
             accession_number=filing.accession_number,
             exhibit_url="",
         )
@@ -829,6 +832,7 @@ class TestSaveOutput:
             location="Ireland",
             filing_date="2024-09-28",
             form_type="10-K",
+            exhibit_type="21",
             accession_number=accession,
             exhibit_url="https://www.sec.gov/Archives/edgar/data/320193/ex21.htm",
         )

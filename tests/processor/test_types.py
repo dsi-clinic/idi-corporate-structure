@@ -217,6 +217,7 @@ class TestSubsidiaryDataclass:
             location="Ireland",
             filing_date="2024-09-28",
             form_type="10-K",
+            exhibit_type="21",
             accession_number="0000320193-24-000123",
             exhibit_url="https://www.sec.gov/Archives/edgar/data/320193/ex21.htm",
         )

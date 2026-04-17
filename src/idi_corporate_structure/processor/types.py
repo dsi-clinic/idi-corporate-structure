@@ -2,6 +2,7 @@
 
 # Standard application imports
 import pathlib
+import re
 import threading
 from dataclasses import dataclass
 
@@ -38,6 +39,14 @@ class Filing:
     company_name: str = ""
     location: str = ""
     filename: str = ""
+
+    @property
+    def exhibit_type(self) -> str:
+        """Retrun the exhibit number for the filing's subsidiary list.
+
+        10-K filers use Exhibit 21; 20-F filers use Exhibit 8.
+        """
+        return "8" if re.match(r"20-?F", self.form_type) else "21"
 
 
 @dataclass

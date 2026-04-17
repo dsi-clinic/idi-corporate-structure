@@ -103,6 +103,7 @@ class Subsidiary:
     parent_cik: str
     filing_date: str
     form_type: str
+    exhibit_type: str
     accession_number: str
     exhibit_url: str
     name: str

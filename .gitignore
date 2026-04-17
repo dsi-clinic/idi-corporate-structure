@@ -1,8 +1,19 @@
+# Python-generated files
 .jupyter
 .ipynb_checkpoints
 __pycache__
 *~
 *.egg-info
+
+# Virtual environments
 .claude
 .venv
+
+# Log files
 logs/
+
+# Pulumi
+pulumi/venv/
+pulumi/__pycache__/
+pulumi/.pulumi/
+pulumi/Pulumi.dev.yaml

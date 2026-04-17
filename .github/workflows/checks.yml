@@ -156,12 +156,5 @@ jobs:
           pulumi config set aws:region ${{ secrets.AWS_REGION || 'us-east-2' }}
           pulumi config set idi:bucket_name ${{ secrets.BUCKET_NAME }}
           pulumi config set idi:input_file ${{ secrets.INPUT_FILE }}
-          pulumi config set idi:app_name ${{ env.APP_NAME }}
-          pulumi config set idi:cpu ${{ secrets.ECS_TASK_CPU }}
-          pulumi config set idi:memory ${{ secrets.ECS_TASK_MEMORY }}
-          pulumi config set idi:rate_limit ${{ secrets.API_RATE_LIMIT }}
-          pulumi config set idi:num_workers ${{ secrets.NUM_WORKERS }}
-          pulumi config set idi:input_sample_size ${{ secrets.INPUT_SAMPLE_SIZE }}
           pulumi config set --secret idi:openai_api_key ${{ secrets.OPENAI_API_KEY }}
-          pulumi config set idi:cron_corporate_structure ${{ secrets.CRON }}
           uv run pulumi preview --non-interactive

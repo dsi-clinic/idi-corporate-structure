@@ -121,7 +121,7 @@ class Pipeline(ABC):
 class SubsidiaryPipeline(Pipeline):
     """Pipeline that fetches Exhibit 21 filings from SEC EDGAR and extracts subsidiary data."""
 
-    EX = re.compile(r"\BEX")
+    EX = re.compile(r"EX[-\d]", re.IGNORECASE)
     IS_10K = re.compile("10-?K")
     IS_20F = re.compile("20-?F")
     IS_DATE = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")

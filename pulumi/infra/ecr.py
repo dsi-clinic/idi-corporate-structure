@@ -27,18 +27,20 @@ orchestrator_image = ecr_registry.apply(lambda r: f"{r}/{config.name_prefix}-orc
 ecr_lifecycle_policy = aws.ecr.LifecyclePolicy(
     "idi-ecr-lifecycle",
     repository=ecr_repo.name,
-    policy=json.dumps({
-        "rules": [
-            {
-                "rulePriority": 1,
-                "description": "Keep last 5 images",
-                "selection": {
-                    "tagStatus": "any",
-                    "countType": "imageCountMoreThan",
-                    "countNumber": 5,
-                },
-                "action": {"type": "expire"},
-            }
-        ]
-    }),
+    policy=json.dumps(
+        {
+            "rules": [
+                {
+                    "rulePriority": 1,
+                    "description": "Keep last 5 images",
+                    "selection": {
+                        "tagStatus": "any",
+                        "countType": "imageCountMoreThan",
+                        "countNumber": 5,
+                    },
+                    "action": {"type": "expire"},
+                }
+            ]
+        }
+    ),
 )

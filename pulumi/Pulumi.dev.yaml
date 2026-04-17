@@ -1,8 +1,0 @@
-config:
-  aws:region: us-east-2
-  idi:input_sample_size: "5"
-  idi:schedule_enabled: "false"
-  idi:openai_api_key:
-    secure: v1:MHNwazwacn67e1eJ:0gFSJQwpPlrLZX48lIfKQdOdWuU4UNuF1QLvuVU8rZWYuKyqw67PjGsssWDZCnbSfyl5EuVGZ3gAdUT9NTsWU7QKip+xuyqPxNVMFCS9rWSazdporJdLHjTDfDvz1C9jPyikvfyVDM4Sej2xjsYyxwabwPb0BZKFevN66Tr5p3AtNuZFNYBF+yU8dx0AXi5Z4uxvofRvGzEc8jM037Tt68jHXIa8sedntBu5fuOkaHvRJbxu
-  idi:bucket_name: idi-dev-processor-s3
-encryptionsalt: v1:PYCVeUGcgls=:v1:AQ8AGg6UJEUb+tvh:EL5quTVrGvZN7Or8PK0j/dFf/7BQQQ==

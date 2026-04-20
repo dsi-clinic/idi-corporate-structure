@@ -431,6 +431,18 @@ class SubsidiaryPipeline(Pipeline):
                 subsidiaries = self.extractor.extract(filing, exhibit_contents)
                 results_queue.put(subsidiaries)
 
+                if len(subsidiaries) == 0:
+                    self.logger.warning(
+                        "No subsidiaries found for filing: %s - %s - %s",
+                        filing.cik,
+                        filing.accession_number,
+                        filing.filing_date,
+                    )
+                    self.stats.increment("zero_subsidiaries")
+                    self.failure_registry.add(
+                        (filing.cik, filing.filename), FailureType.NO_SUBSIDIARIES
+                    )
+
             except DocumentError as e:
                 self.logger.error(
                     "Document error for filing: %s - %s - %s: %s",
@@ -731,6 +743,7 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("  Subsidiaries")
         self.logger.info("    Total:    %d", self.stats.total_subsidiaries)
         self.logger.info("    Failed:   %d", self.stats.failed_subsidiaries)
+        self.logger.info("    Zero:     %d", self.stats.zero_subsidiaries)
         self.logger.info("=" * 40)
 
     def run(self) -> None:

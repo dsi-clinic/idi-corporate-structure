@@ -27,6 +27,7 @@ class FailureType(StrEnum):
     EXTRACTION_FAILED = "extraction_failed"  # GPT returned no structured data
     API_ERROR = "api_error"  # HTTP failure fetching filing document
     RATE_LIMIT = "rate_limit"  # SEC rate limit (429)
+    NO_SUBSIDIARIES = "no_subsidiaries"  # No subsidiaries found for filing
 
 
 class CorporateStructureFailureClassifier(FailureClassifier):
@@ -41,6 +42,7 @@ class CorporateStructureFailureClassifier(FailureClassifier):
             FailureType.NO_FILING_DIRECTORY,
             FailureType.DOCUMENT_ERROR,
             FailureType.NO_OVERFLOW_FILINGS,
+            FailureType.NO_SUBSIDIARIES,
         }
     )
 

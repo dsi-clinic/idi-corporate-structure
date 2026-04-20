@@ -80,6 +80,7 @@ class PipelineStats:
     skipped_filings: int = 0
     total_subsidiaries: int = 0
     failed_subsidiaries: int = 0
+    zero_subsidiaries: int = 0
 
     def __post_init__(self) -> None:
         """Initialize the pipeline stats."""

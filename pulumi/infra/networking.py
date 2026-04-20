@@ -1,6 +1,5 @@
 """VPC, security groups, and VPC endpoints for ECS Fargate tasks."""
 
-import pulumi
 import pulumi_aws as aws
 
 from . import config

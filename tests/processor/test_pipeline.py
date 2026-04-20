@@ -843,27 +843,27 @@ class TestSaveOutput:
         pipeline.save_output(subsidiaries)
 
         assert pipeline.config.output_file
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert len(df) == 1
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert len(result_df) == 1
 
     def test_output_contains_all_subsidiary_fields(self, pipeline):
         subsidiaries = [self._make_subsidiary("Apple Sales International")]
 
         pipeline.save_output(subsidiaries)
 
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert df.iloc[0]["name"] == "Apple Sales International"
-        assert df.iloc[0]["parent_cik"] == "0000320193"
-        assert df.iloc[0]["location"] == "Ireland"
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert result_df.iloc[0]["name"] == "Apple Sales International"
+        assert result_df.iloc[0]["parent_cik"] == "0000320193"
+        assert result_df.iloc[0]["location"] == "Ireland"
 
     def test_adds_date_added_column(self, pipeline):
         subsidiaries = [self._make_subsidiary("Apple Operations International")]
 
         pipeline.save_output(subsidiaries)
 
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert "date_added" in df.columns
-        assert df.iloc[0]["date_added"] is not None
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert "date_added" in result_df.columns
+        assert result_df.iloc[0]["date_added"] is not None
 
     def test_deduplicates_within_filing(self, pipeline):
         """Same parent_cik + accession_number + name should be written once."""
@@ -874,8 +874,8 @@ class TestSaveOutput:
 
         pipeline.save_output(subsidiaries)
 
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert len(df) == 1
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert len(result_df) == 1
 
     def test_keeps_same_name_across_different_filings(self, pipeline):
         """Same subsidiary name in two different filings should produce two rows."""
@@ -890,8 +890,8 @@ class TestSaveOutput:
 
         pipeline.save_output(subsidiaries)
 
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert len(df) == 2
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert len(result_df) == 2
 
 
 # ── display_stats ─────────────────────────────────────────────────────────────

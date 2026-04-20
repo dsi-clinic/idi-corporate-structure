@@ -49,3 +49,15 @@ config:
   idi:input_file:
     description: Input file path (S3 URI or HTTPS URL)
     default: "https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip"
+
+  idi:log_retention_days:
+    description: CloudWatch log group retention in days
+    default: "30"
+
+  idi:dlq_retention_days:
+    description: SQS dead-letter queue retention in days
+    default: "14"
+
+  idi:ecr_image_count:
+    description: ECR image retention count
+    default: "5"

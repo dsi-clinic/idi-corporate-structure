@@ -1,5 +1,6 @@
 """VPC, security groups, and VPC endpoints for ECS Fargate tasks."""
 
+import pulumi
 import pulumi_aws as aws
 
 from . import config
@@ -12,7 +13,7 @@ default_vpc_subnets = aws.ec2.get_subnets_output(
     filters=[aws.ec2.GetSubnetsFilterArgs(name="vpc-id", values=[default_vpc.id])],
 )
 # Single subnet — single AZ for simplicity.
-primary_subnet_id = default_vpc_subnets.ids.apply(lambda ids: ids[0])
+primary_subnet_id = default_vpc_subnets.ids.apply(lambda ids: ids[0] if ids else None)
 
 # -----------------------------------------------------------------------------
 # ECS Fargate Security Group — egress only (tasks don't serve traffic)

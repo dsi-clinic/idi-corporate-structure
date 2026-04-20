@@ -13,6 +13,9 @@ app_name = config.get("app_name") or "corporate-structure"
 stack_name = pulumi.get_stack()
 name_prefix = f"{project_name}-{stack_name}-{app_name}"
 bucket_name = config.require("bucket_name")
+log_retention_days = int(config.get("log_retention_days") or "30")
+dlq_retention_days = int(config.get("dlq_retention_days") or "14")
+ecr_image_count = int(config.get("ecr_image_count") or "5")
 
 # AWS
 aws_config = pulumi.Config("aws")

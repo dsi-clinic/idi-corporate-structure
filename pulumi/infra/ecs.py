@@ -29,7 +29,7 @@ cluster = aws.ecs.Cluster(
 log_group = aws.cloudwatch.LogGroup(
     "idi-ecs-log-group",
     name=f"/ecs/{config.name_prefix}",
-    retention_in_days=30,
+    retention_in_days=config.log_retention_days,
     tags=config.tags(),
 )
 

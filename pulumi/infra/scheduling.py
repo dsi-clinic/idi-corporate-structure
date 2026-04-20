@@ -20,7 +20,7 @@ from . import config, ecs, iam, networking
 dlq = aws.sqs.Queue(
     "idi-scheduler-dlq",
     name=f"{config.name_prefix}-scheduler-dlq",
-    message_retention_seconds=1209600,  # 14 days
+    message_retention_seconds=config.dlq_retention_days * 86400,
     tags=config.tags({"purpose": "EventBridge Scheduler dead-letter queue"}),
 )
 

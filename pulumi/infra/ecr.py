@@ -19,6 +19,7 @@ ecr_repo = aws.ecr.Repository(
     "idi-ecr-orchestrator",
     name=f"{config.name_prefix}-orchestrator",
     force_delete=True,
+    tags=config.tags(),
 )
 
 orchestrator_image = ecr_registry.apply(lambda r: f"{r}/{config.name_prefix}-orchestrator:latest")
@@ -36,7 +37,7 @@ ecr_lifecycle_policy = aws.ecr.LifecyclePolicy(
                     "selection": {
                         "tagStatus": "any",
                         "countType": "imageCountMoreThan",
-                        "countNumber": 5,
+                        "countNumber": config.ecr_image_count,
                     },
                     "action": {"type": "expire"},
                 }

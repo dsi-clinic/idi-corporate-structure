@@ -714,14 +714,39 @@ class SubsidiaryPipeline(Pipeline):
         Returns:
             None
         """
+        # Save processed subsidiaries to a DataFrame
         subsidiaries_df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
-        subsidiaries_df = subsidiaries_df.drop_duplicates(
+
+        try:
+            # Read existing subsidiaries from the output file
+            existing_subsidiaries_df = pd.read_parquet(self.config.output_file)
+            self.logger.info(
+                "Merging existing %d subsidiaries with %d new subsidiaries from %s",
+                len(existing_subsidiaries_df),
+                len(subsidiaries_df),
+                self.config.output_file
+            )
+            combined_subsidiaries_df = pd.concat([existing_subsidiaries_df, subsidiaries_df], ignore_index=True)
+        except FileNotFoundError:
+            self.logger.info("No existing subsidiaries found, creating new file")
+            combined_subsidiaries_df = subsidiaries_df
+
+        # Drop duplicate rows keyed on (parent_cik, accession_number, name)
+        combined_subsidiaries_df = combined_subsidiaries_df.drop_duplicates(
             subset=["parent_cik", "accession_number", "name"]
         )
-        subsidiaries_df["date_added"] = datetime.datetime.now(datetime.UTC).isoformat()
-        subsidiaries_df.to_parquet(self.config.output_file)
+
+        # Add a date_added column if it doesn't exist and set the value to the current UTC timestamp
+        if "data_added" not in combined_subsidiaries_df.columns:
+            combined_subsidiaries_df["data_added"] = pd.NA
+        combined_subsidiaries_df.loc[combined_subsidiaries_df["data_added"].isna(), "date_added"] = (
+            datetime.datetime.now(datetime.UTC).isoformat()
+        )
+
+        # Save the combined subsidiaries to the output file
+        combined_subsidiaries_df.to_parquet(self.config.output_file)
         self.logger.info(
-            "Saved %d subsidiaries to %s", len(subsidiaries_df), self.config.output_file
+            "Saved %d subsidiaries to %s", len(combined_subsidiaries_df), self.config.output_file
         )
 
     def display_stats(self) -> None:

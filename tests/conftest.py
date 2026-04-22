@@ -45,7 +45,11 @@ def make_directory_response(items: list | None = None) -> dict:
     }
 
 
-def make_exhibit_response(content: str = "<html>Subsidiaries</html>") -> dict:
+def make_exhibit_response(
+    content: str = (
+        "<html><body>\nApple Operations LLC (Delaware)\nApple Europe Ltd (Ireland)\n</body></html>"
+    ),
+) -> dict:
     """Build a minimal SEC exhibit HTTP response dict."""
     return {
         "status_code": 200,

@@ -495,7 +495,6 @@ class SubsidiaryPipeline(Pipeline):
             filing, exhibit_contents = work_queue.get()
             try:
                 subsidiaries = self.extractor.extract(filing, exhibit_contents)
-                results_queue.put(subsidiaries)
 
                 if len(subsidiaries) == 0:
                     self.logger.warning(
@@ -508,6 +507,8 @@ class SubsidiaryPipeline(Pipeline):
                     self.failure_registry.add(
                         (filing.cik, filing.filename), FailureType.NO_SUBSIDIARIES
                     )
+
+                results_queue.put(subsidiaries)
 
             except DocumentError as e:
                 self.logger.error(
@@ -872,6 +873,8 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("    Total:    %d", self.stats.total_subsidiaries)
         self.logger.info("    Failed:   %d", self.stats.failed_subsidiaries)
         self.logger.info("    Zero:     %d", self.stats.zero_subsidiaries)
+        self.logger.info("    Ungrounded: %d", self.stats.ungrounded_subsidiaries)
+        self.logger.info("    Dropped:    %d", self.stats.dropped_subsidiaries)
         self.logger.info("=" * 40)
 
     def run(self) -> None:

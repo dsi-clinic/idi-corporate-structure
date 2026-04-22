@@ -82,6 +82,8 @@ class PipelineStats:
     total_subsidiaries: int = 0
     failed_subsidiaries: int = 0
     zero_subsidiaries: int = 0
+    ungrounded_subsidiaries: int = 0
+    dropped_subsidiaries: int = 0
 
     def __post_init__(self) -> None:
         """Initialize the pipeline stats."""
@@ -112,3 +114,4 @@ class Subsidiary:
     location: str
     parent_name: str = ""
     parent_location: str = ""
+    source_quote: str = ""

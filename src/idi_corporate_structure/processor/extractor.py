@@ -1,12 +1,16 @@
 """Extractors for parsing subsidiary data from SEC exhibit documents."""
 
 # Standard imports
+import importlib.resources
 import json
 from abc import ABC, abstractmethod
 
 # Application imports
 from idi_corporate_structure.common.api import OpenAiClient
+from idi_corporate_structure.common.logs import get_logger
 from idi_corporate_structure.processor.types import Filing, Subsidiary
+
+_PROMPTS = importlib.resources.files("idi_corporate_structure.processor.prompts")
 
 
 class DocumentError(Exception):
@@ -36,25 +40,14 @@ class GptExtractor(Extractor):
     """Extracts subsidiaries from a single exhibit document using GPT."""
 
     _DOCUMENT_ERROR_STATUS_CODE = 400
-    _SYSTEM_PROMPT = """
-    Given a table of a company's subsidiaries (in Markdown or raw text, previously converted from PDF), format them as a JSON, like
-
-    ```json
-    {
-    "subsidiaries": [
-        {"name": "XXX", "in": YYY}
-    ]
-    }
-    ```
-
-    objects, where `"XXX"` is the name of the subsidiary and `YYY` is the place of incorporation or other location, or `null` if not provided.
-
-    Include all of the subsidiaries, but ignore any nested structure and ignore any data unrelated to subsidiaries.
-    """.strip()
+    _SYSTEM_PROMPT: str = (
+        _PROMPTS.joinpath("gpt_extractor_system.txt").read_text(encoding="utf-8").strip()
+    )
 
     def __init__(self, openai_api_key: str) -> None:
         """Initialize the GPT extractor with the OpenAI API key."""
         self._openai_client = OpenAiClient(api_key=openai_api_key)
+        self._logger = get_logger(__name__)
 
     def _get_request_data_json(self, document: str) -> dict:
         """Build the OpenAI chat completions request payload for subsidiary extraction.
@@ -96,9 +89,10 @@ class GptExtractor(Extractor):
                                     "type": "object",
                                     "properties": {
                                         "name": {"type": "string"},
-                                        "in": {"type": ["string", "null"]},
+                                        "location": {"type": ["string", "null"]},
+                                        "source_quote": {"type": "string"},
                                     },
-                                    "required": ["name", "in"],
+                                    "required": ["name", "location", "source_quote"],
                                     "additionalProperties": False,
                                 },
                             },
@@ -117,7 +111,7 @@ class GptExtractor(Extractor):
 
         Returns:
             Parsed JSON response from the model as a dict with a ``"subsidiaries"``
-            key containing a list of ``{"name": ..., "in": ...}`` objects.
+            key containing a list of ``{"name": ..., "location": ..., "source_quote": ...}`` objects.
 
         Raises:
             DocumentError: If the API returns a 400-level status code, indicating
@@ -134,6 +128,22 @@ class GptExtractor(Extractor):
 
         content = response["data"]["choices"][0]["message"]["content"]
         return json.loads(content)
+
+    @staticmethod
+    def _is_grounded(quote: str, document: str) -> bool:
+        """Check if a source quote is grounded in the document.
+
+        Args:
+            quote: The source quote to check.
+            document: The document to check the quote in.
+
+        Returns:
+            True if the quote is grounded in the document, False otherwise.
+        """
+        if not quote:
+            return False
+
+        return " ".join(quote.split()) in " ".join(document.split())
 
     def extract(self, filing: Filing, document: dict) -> list[Subsidiary]:
         """Extract subsidiaries from an exhibit document using GPT.
@@ -157,6 +167,21 @@ class GptExtractor(Extractor):
             RuntimeError: If the OpenAI API returns any other error.
         """
         summary = self._summarize(document["data"])
+
+        grounded_subsidiaries = [
+            sub
+            for sub in summary["subsidiaries"]
+            if self._is_grounded(sub.get("source_quote", ""), document["data"])
+        ]
+
+        dropped = len(summary["subsidiaries"]) - len(grounded_subsidiaries)
+        if dropped:
+            self._logger.warning(
+                "Dropped %d ungrounded subsidiaries from %s",
+                dropped,
+                document["url"],
+            )
+
         return [
             Subsidiary(
                 parent_cik=filing.cik,
@@ -168,7 +193,8 @@ class GptExtractor(Extractor):
                 accession_number=filing.accession_number,
                 exhibit_url=document["url"],
                 name=sub["name"],
-                location=sub.get("in") or "",
+                location=sub.get("location") or "",
+                source_quote=sub.get("source_quote") or "",
             )
-            for sub in summary["subsidiaries"]
+            for sub in grounded_subsidiaries
         ]

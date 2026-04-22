@@ -8,7 +8,7 @@ Each run performs three stages:
 
 1. **Collection** — parse `submissions.zip` from SEC EDGAR bulk data; extract all 10-K filing metadata (CIK, accession number, filing date, exhibit URLs); output `Filing` records
 2. **Retrieval** — fetch each filing's directory index from SEC EDGAR; locate and download Exhibit 21 (Subsidiaries of the Registrant)
-3. **Extraction** — pass exhibit content to GPT to parse subsidiary names and incorporation locations; output structured `Subsidiary` records
+3. **Extraction** — pass exhibit content to `gpt-4.1-nano` using structured output to parse subsidiary names and incorporation locations. Each result includes a `source_quote`: a verbatim snippet from the exhibit that contains the subsidiary's name. Rows whose quote cannot be matched in the source text are dropped to reduce hallucinations. Output is structured `Subsidiary` records written to Parquet.
 
 Processing tracks permanent failures to disk so interrupted runs do not re-attempt filings that will always fail.
 
@@ -16,7 +16,7 @@ Processing tracks permanent failures to disk so interrupted runs do not re-attem
 
 ```
 output/
-  # Parquet — columns: parent_cik, name, location, filing_date, form_type, accession_number, exhibit_url, date_added
+  # Parquet — columns: parent_cik, name, location, source_quote, filing_date, form_type, accession_number, exhibit_url, date_added
   {output_file}
 failures/
   # permanent failures keyed by (cik, accession_number)

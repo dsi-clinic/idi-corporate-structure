@@ -381,6 +381,33 @@ pipeline.py
 
 ---
 
+## Versioning & Branching
+
+Versions follow [PEP 440](https://peps.python.org/pep-0440/): `MAJOR.MINOR.PATCH[aN|rcN]`.
+
+The CI pipeline bumps the version automatically on every push. The typical release flow is:
+
+```
+dev (alpha)  →  release (rc)  →  main (stable)
+0.1.0
+  └─ push to dev           →  0.1.1a1   (--bump patch --bump alpha)
+  └─ push to dev again     →  0.1.1a2   (--bump alpha)
+  └─ push to release       →  0.1.1rc1  (--bump rc)
+  └─ push to release again →  0.1.1rc2  (--bump rc)
+  └─ merge to main         →  0.1.1     (--bump stable)
+```
+
+**Branch naming:**
+
+| Branch | Stage | Command |
+|---|---|---|
+| `dev` | Alpha pre-release | `--bump patch --bump alpha` on first push; `--bump alpha` thereafter |
+| `release` | Release candidate | `--bump rc` (works from both alpha and existing rc) |
+| `release/X.Y.Z` | Versioned RC | Sets version explicitly to `X.Y.Zrc1` on first push; `--bump rc` thereafter |
+| `main` | Stable release | `--bump stable` (strips pre-release suffix) |
+
+---
+
 ## Development & Contributing
 
 Install all dependency groups (includes `dev` tools: pytest, ruff):

@@ -110,10 +110,14 @@ class Pipeline(ABC):
         start_time = datetime.datetime.now()
 
         input_data = self.load_input()
-        results = self.process(input_data)
 
-        self.save_output(results)
-        self.display_stats()
+        if input_data:
+            results = self.process(input_data)
+            self.save_output(results)
+            self.display_stats()
+        else:
+            self.logger.info("No input data found, skipping pipeline")
+
         end_time = datetime.datetime.now()
         self.logger.info("Elasped time: %s", end_time - start_time)
 
@@ -151,6 +155,7 @@ class SubsidiaryPipeline(Pipeline):
             flush_every=config.failure_flush_every,
         )
         self.rows = []
+        self._stale_filing_keys: set[tuple[str, str]] = set()
 
     def _retrieve_overflow_filings(
         self, data: dict, cik: str, zf: zipfile.ZipFile
@@ -406,7 +411,68 @@ class SubsidiaryPipeline(Pipeline):
         )
         self.logger.info("Skipped %d files", self.stats.skipped_filings)
 
-        return filings
+        return self._filter_already_processed(filings)
+
+    def _filter_already_processed(self, filings: list[Filing]) -> list[Filing]:
+        """Drop filings already represented in the output parquet, unless stale.
+
+        Reads the existing output parquet and partitions its ``(parent_cik,
+        accession_number)`` keys into fresh (within ``stale_threshold_days``) and
+        stale (older). Fresh filings are removed from the returned list; stale
+        filing keys are recorded on ``self._stale_filing_keys`` so that
+        `save_output` can drop their old rows before merging the new ones.
+
+        If ``stale_threshold_days`` is ``None`` or no parquet exists yet, returns
+        ``filings`` unchanged.
+
+        Args:
+            filings: Filings returned by `load_input`.
+
+        Returns:
+            Filings that still need to be processed (new + stale).
+        """
+        if self.config.stale_threshold_days is None:
+            return filings
+
+        try:
+            existing_df = pd.read_parquet(self.config.output_file)
+        except FileNotFoundError:
+            return filings
+
+        if existing_df.empty or "date_added" not in existing_df.columns:
+            return filings
+
+        # Get the last date_added for each (parent_cik, accession_number) group
+        last_added = (
+            pd.to_datetime(existing_df["date_added"], utc=True, errors="coerce")
+            .groupby([existing_df["parent_cik"], existing_df["accession_number"]])
+            .max()
+        )
+        threshold = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=self.config.stale_threshold_days)
+
+        # Filter filings to only include those that have a date_added greater than or equal to the threshold
+        fresh_keys = {key for key, ts in last_added.items() if pd.notna(ts) and ts >= threshold}
+
+        # Filter filings to only include those that have a date_added less than the threshold
+        self._stale_filing_keys = {
+            key for key, ts in last_added.items() if pd.notna(ts) and ts < threshold
+        }
+
+        # Filter filings to only include those that are not in the fresh_keys set
+        unprocessed = [
+            f
+            for f in filings
+            if (f.cik, f.accession_number) not in fresh_keys
+            and (f.cik, f.filename) not in self.failure_registry
+        ]
+        self.logger.info(
+            "Filter: %d filings loaded, %d skipped as fresh, %d stale to reprocess, %d remaining",
+            len(filings),
+            len(filings) - len(unprocessed),
+            len(self._stale_filing_keys),
+            len(unprocessed),
+        )
+        return unprocessed
 
     def _extract_worker(self, work_queue: queue.Queue, results_queue: queue.Queue) -> None:
         """Worker thread that extracts subsidiaries from queued exhibit documents.
@@ -689,6 +755,10 @@ class SubsidiaryPipeline(Pipeline):
             # SEC operations to fetch exhibit data — one task per document
             for filing in input_list:
                 exhibit_contents = self._fetch_exhibit(filing)
+                if not exhibit_contents:
+                    self.failure_registry.add(
+                        (filing.cik, filing.filename), FailureType.NO_EXHIBIT_FOUND
+                    )
                 for exhibit_content in exhibit_contents:
                     work_queue.put((filing, exhibit_content))
                     extract_bar.total += 1
@@ -700,6 +770,34 @@ class SubsidiaryPipeline(Pipeline):
             result_queue.join()
 
         return subsidiaries
+
+    def _drop_stale_rows(self, existing_subsidiaries_df: pd.DataFrame) -> pd.DataFrame:
+        """Drop stale rows from the subsidiaries DataFrame.
+
+        Args:
+            existing_subsidiaries_df: DataFrame of existing subsidiaries
+
+        Returns:
+            DataFrame of subsidiaries with stale rows dropped
+        """
+        # Create a mask of stale rows
+        if self._stale_filing_keys and not existing_subsidiaries_df.empty:
+            stale_mask = pd.Series(
+                list(
+                    zip(
+                        existing_subsidiaries_df["parent_cik"],
+                        existing_subsidiaries_df["accession_number"],
+                    )
+                ),
+                index=existing_subsidiaries_df.index,
+            ).isin(self._stale_filing_keys)
+            # Drop rows for stale filings so re-extracted subsidiaries replace them
+            dropped = int(stale_mask.sum())
+            if dropped:
+                self.logger.info("Dropping %d stale rows before merge", dropped)
+                existing_subsidiaries_df = existing_subsidiaries_df.loc[~stale_mask]
+
+        return existing_subsidiaries_df
 
     def save_output(self, processed_list: list[Subsidiary]) -> None:
         """Deduplicate and persist extracted subsidiaries as a Parquet file.
@@ -718,15 +816,20 @@ class SubsidiaryPipeline(Pipeline):
         subsidiaries_df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
 
         try:
-            # Read existing subsidiaries from the output file
+            # Read existing subsidiaries from the output file and drop stale rows
             existing_subsidiaries_df = pd.read_parquet(self.config.output_file)
+            existing_subsidiaries_df = self._drop_stale_rows(existing_subsidiaries_df)
+
+            # Merge the existing subsidiaries with the new subsidiaries
             self.logger.info(
-                "Merging existing %d subsidiaries with %d new subsidiaries from %s",
+                "Merging existing %d subsidiaries with %d new subsidiaries",
                 len(existing_subsidiaries_df),
                 len(subsidiaries_df),
-                self.config.output_file
             )
-            combined_subsidiaries_df = pd.concat([existing_subsidiaries_df, subsidiaries_df], ignore_index=True)
+            combined_subsidiaries_df = pd.concat(
+                [existing_subsidiaries_df, subsidiaries_df], ignore_index=True
+            )
+
         except FileNotFoundError:
             self.logger.info("No existing subsidiaries found, creating new file")
             combined_subsidiaries_df = subsidiaries_df
@@ -737,11 +840,11 @@ class SubsidiaryPipeline(Pipeline):
         )
 
         # Add a date_added column if it doesn't exist and set the value to the current UTC timestamp
-        if "data_added" not in combined_subsidiaries_df.columns:
-            combined_subsidiaries_df["data_added"] = pd.NA
-        combined_subsidiaries_df.loc[combined_subsidiaries_df["data_added"].isna(), "date_added"] = (
-            datetime.datetime.now(datetime.UTC).isoformat()
-        )
+        if "date_added" not in combined_subsidiaries_df.columns:
+            combined_subsidiaries_df["date_added"] = pd.NA
+        combined_subsidiaries_df.loc[
+            combined_subsidiaries_df["date_added"].isna(), "date_added"
+        ] = datetime.datetime.now(datetime.UTC).isoformat()
 
         # Save the combined subsidiaries to the output file
         combined_subsidiaries_df.to_parquet(self.config.output_file)

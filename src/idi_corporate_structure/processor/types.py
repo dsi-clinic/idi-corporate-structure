@@ -60,6 +60,7 @@ class PipelineConfig:
     failure_flush_every: int = 50
     rate_limit: float = 0.2
     num_workers: int = 10
+    stale_threshold_days: int | None = 30
 
     def __post_init__(self) -> None:
         """Validate existence of local files."""

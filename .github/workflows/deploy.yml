@@ -190,6 +190,7 @@ jobs:
       ECS_TASK_MEMORY: ${{ secrets.ECS_TASK_MEMORY }}
       API_RATE_LIMIT: ${{ secrets.API_RATE_LIMIT }}
       NUM_WORKERS: ${{ secrets.NUM_WORKERS }}
+      THRESHOLD_DAYS: ${{ secrets.THRESHOLD_DAYS }}
       INPUT_SAMPLE_SIZE: ${{ secrets.INPUT_SAMPLE_SIZE }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       CRON: ${{ secrets.CRON }}
@@ -226,6 +227,7 @@ jobs:
           [ -n "$ECS_TASK_MEMORY" ] && pulumi config set idi:memory "$ECS_TASK_MEMORY"
           [ -n "$API_RATE_LIMIT" ] && pulumi config set idi:rate_limit "$API_RATE_LIMIT"
           [ -n "$NUM_WORKERS" ] && pulumi config set idi:num_workers "$NUM_WORKERS"
+          [ -n "$THRESHOLD_DAYS" ] && pulumi config set idi:stale_threshold_days "$THRESHOLD_DAYS"
           [ -n "$INPUT_SAMPLE_SIZE" ] && pulumi config set idi:input_sample_size "$INPUT_SAMPLE_SIZE"
           [ -n "$OPENAI_API_KEY" ] && pulumi config set --secret idi:openai_api_key "$OPENAI_API_KEY"
           [ -n "$CRON" ] && pulumi config set idi:cron_corporate_structure "$CRON"

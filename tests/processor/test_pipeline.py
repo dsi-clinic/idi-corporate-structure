@@ -933,3 +933,311 @@ class TestDisplayStats:
         assert any("Filings" in arg for arg in logged_args)
         assert any("Subsidiaries" in arg for arg in logged_args)
         assert any("=" in arg for arg in logged_args)
+
+
+# ── _filter_already_processed ─────────────────────────────────────────────────
+
+
+class TestFilterAlreadyProcessed:
+    """Tests for SubsidiaryPipeline._filter_already_processed()."""
+
+    def _make_filing(
+        self,
+        cik: str = "0000320193",
+        accession: str = "0000320193-24-000001",
+        filename: str = "CIK0000320193.json",
+    ) -> Filing:
+        return Filing(
+            cik=cik,
+            filing_date="2024-09-28",
+            form_type="10-K",
+            accession_number=accession,
+            directory="https://www.sec.gov/Archives/edgar/data/0000320193/index.json",
+            primary_document="",
+            filename=filename,
+        )
+
+    def _write_parquet(self, path: str, rows: list[dict]) -> None:
+        pd.DataFrame(rows).to_parquet(path)
+
+    def _fresh_ts(self) -> str:
+        return pd.Timestamp.now(tz="UTC").isoformat()
+
+    def _stale_ts(self, days: int = 60) -> str:
+        return (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).isoformat()
+
+    def test_returns_all_filings_when_no_parquet(self, pipeline):
+        filings = [self._make_filing()]
+
+        result = pipeline._filter_already_processed(filings)
+
+        assert result == filings
+
+    def test_returns_all_filings_when_threshold_is_none(self, pipeline):
+        pipeline.config.stale_threshold_days = None
+        filings = [self._make_filing()]
+
+        result = pipeline._filter_already_processed(filings)
+
+        assert result == filings
+
+    def test_returns_all_when_parquet_is_empty(self, pipeline):
+        pd.DataFrame(columns=["parent_cik", "accession_number", "date_added"]).to_parquet(
+            pipeline.config.output_file
+        )
+        filing = self._make_filing()
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing in result
+
+    def test_returns_all_when_no_date_added_column(self, pipeline):
+        self._write_parquet(
+            pipeline.config.output_file,
+            [{"parent_cik": "0000320193", "accession_number": "0000320193-24-000001"}],
+        )
+        filing = self._make_filing()
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing in result
+
+    def test_skips_fresh_filing(self, pipeline):
+        filing = self._make_filing()
+        self._write_parquet(
+            pipeline.config.output_file,
+            [
+                {
+                    "parent_cik": filing.cik,
+                    "accession_number": filing.accession_number,
+                    "name": "Sub A",
+                    "date_added": self._fresh_ts(),
+                }
+            ],
+        )
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert result == []
+
+    def test_includes_stale_filing(self, pipeline):
+        filing = self._make_filing()
+        pipeline.config.stale_threshold_days = 30
+        self._write_parquet(
+            pipeline.config.output_file,
+            [
+                {
+                    "parent_cik": filing.cik,
+                    "accession_number": filing.accession_number,
+                    "name": "Sub A",
+                    "date_added": self._stale_ts(days=60),
+                }
+            ],
+        )
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing in result
+
+    def test_includes_new_filing_not_in_parquet(self, pipeline):
+        self._write_parquet(
+            pipeline.config.output_file,
+            [
+                {
+                    "parent_cik": "OTHER_CIK",
+                    "accession_number": "OTHER_ACC",
+                    "name": "Sub A",
+                    "date_added": self._fresh_ts(),
+                }
+            ],
+        )
+        filing = self._make_filing()
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing in result
+
+    def test_records_stale_filing_keys(self, pipeline):
+        filing = self._make_filing()
+        pipeline.config.stale_threshold_days = 30
+        self._write_parquet(
+            pipeline.config.output_file,
+            [
+                {
+                    "parent_cik": filing.cik,
+                    "accession_number": filing.accession_number,
+                    "name": "Sub A",
+                    "date_added": self._stale_ts(days=60),
+                }
+            ],
+        )
+
+        pipeline._filter_already_processed([filing])
+
+        assert (filing.cik, filing.accession_number) in pipeline._stale_filing_keys
+
+    def test_skips_filing_in_failure_registry(self, pipeline):
+        filing = self._make_filing()
+        self._write_parquet(
+            pipeline.config.output_file,
+            [
+                {
+                    "parent_cik": "OTHER",
+                    "accession_number": "OTHER",
+                    "name": "X",
+                    "date_added": self._fresh_ts(),
+                }
+            ],
+        )
+        pipeline.failure_registry._entries.add((filing.cik, filing.filename))
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing not in result
+
+    def test_mixed_fresh_stale_and_new(self, pipeline):
+        """Fresh filing skipped, stale included, new included, failure-registry excluded."""
+        pipeline.config.stale_threshold_days = 30
+        fresh_filing = self._make_filing(accession="ACC-FRESH")
+        stale_filing = self._make_filing(accession="ACC-STALE")
+        new_filing = self._make_filing(accession="ACC-NEW")
+        failed_filing = self._make_filing(
+            cik="0000111111", accession="ACC-FAILED", filename="CIK0000111111.json"
+        )
+
+        self._write_parquet(
+            pipeline.config.output_file,
+            [
+                {
+                    "parent_cik": "0000320193",
+                    "accession_number": "ACC-FRESH",
+                    "name": "Sub A",
+                    "date_added": self._fresh_ts(),
+                },
+                {
+                    "parent_cik": "0000320193",
+                    "accession_number": "ACC-STALE",
+                    "name": "Sub B",
+                    "date_added": self._stale_ts(days=60),
+                },
+            ],
+        )
+        pipeline.failure_registry._entries.add(("0000111111", "CIK0000111111.json"))
+
+        result = pipeline._filter_already_processed(
+            [fresh_filing, stale_filing, new_filing, failed_filing]
+        )
+
+        assert fresh_filing not in result
+        assert stale_filing in result
+        assert new_filing in result
+        assert failed_filing not in result
+
+    def test_fresh_key_not_added_to_stale_keys(self, pipeline):
+        filing = self._make_filing()
+        self._write_parquet(
+            pipeline.config.output_file,
+            [
+                {
+                    "parent_cik": filing.cik,
+                    "accession_number": filing.accession_number,
+                    "name": "Sub A",
+                    "date_added": self._fresh_ts(),
+                }
+            ],
+        )
+
+        pipeline._filter_already_processed([filing])
+
+        assert (filing.cik, filing.accession_number) not in pipeline._stale_filing_keys
+
+
+# ── _drop_stale_rows ──────────────────────────────────────────────────────────
+
+
+class TestDropStaleRows:
+    """Tests for SubsidiaryPipeline._drop_stale_rows()."""
+
+    def test_drops_rows_matching_stale_key(self, pipeline):
+        pipeline._stale_filing_keys = {("CIK001", "ACC001")}
+        df = pd.DataFrame(
+            [
+                {"parent_cik": "CIK001", "accession_number": "ACC001", "name": "Sub A"},
+                {"parent_cik": "CIK002", "accession_number": "ACC002", "name": "Sub B"},
+            ]
+        )
+
+        result = pipeline._drop_stale_rows(df)
+
+        assert len(result) == 1
+        assert result.iloc[0]["name"] == "Sub B"
+
+    def test_drops_multiple_rows_for_same_filing(self, pipeline):
+        pipeline._stale_filing_keys = {("CIK001", "ACC001")}
+        df = pd.DataFrame(
+            [
+                {"parent_cik": "CIK001", "accession_number": "ACC001", "name": "Sub A"},
+                {"parent_cik": "CIK001", "accession_number": "ACC001", "name": "Sub B"},
+                {"parent_cik": "CIK002", "accession_number": "ACC002", "name": "Sub C"},
+            ]
+        )
+
+        result = pipeline._drop_stale_rows(df)
+
+        assert len(result) == 1
+        assert result.iloc[0]["name"] == "Sub C"
+
+    def test_returns_df_unchanged_when_no_stale_keys(self, pipeline):
+        pipeline._stale_filing_keys = set()
+        df = pd.DataFrame([{"parent_cik": "CIK001", "accession_number": "ACC001", "name": "Sub A"}])
+
+        result = pipeline._drop_stale_rows(df)
+
+        assert len(result) == 1
+
+    def test_returns_empty_df_unchanged(self, pipeline):
+        pipeline._stale_filing_keys = {("CIK001", "ACC001")}
+        df = pd.DataFrame(columns=["parent_cik", "accession_number", "name"])
+
+        result = pipeline._drop_stale_rows(df)
+
+        assert result.empty
+
+    def test_does_not_drop_non_stale_filing(self, pipeline):
+        pipeline._stale_filing_keys = {("CIK001", "ACC001")}
+        df = pd.DataFrame([{"parent_cik": "CIK002", "accession_number": "ACC002", "name": "Sub B"}])
+
+        result = pipeline._drop_stale_rows(df)
+
+        assert len(result) == 1
+
+
+# ── run (early exit) ──────────────────────────────────────────────────────────
+
+
+class TestRunEarlyExit:
+    """Tests for Pipeline.run() early-exit when load_input returns nothing."""
+
+    def test_skips_process_when_nothing_to_process(self, pipeline, mocker):
+        mocker.patch.object(pipeline, "load_input", return_value=[])
+        mock_process = mocker.patch.object(pipeline, "process")
+
+        pipeline.run()
+
+        mock_process.assert_not_called()
+
+    def test_skips_save_output_when_nothing_to_process(self, pipeline, mocker):
+        mocker.patch.object(pipeline, "load_input", return_value=[])
+        mock_save = mocker.patch.object(pipeline, "save_output")
+
+        pipeline.run()
+
+        mock_save.assert_not_called()
+
+    def test_flushes_failure_registry_on_early_exit(self, pipeline, mocker):
+        mocker.patch.object(pipeline, "load_input", return_value=[])
+        mock_flush = mocker.patch.object(pipeline.failure_registry, "flush")
+
+        pipeline.run()
+
+        mock_flush.assert_called_once()

@@ -170,6 +170,43 @@ class TestFilingDataclass:
         assert f1 == f2
 
 
+class TestFilingExhibitType:
+    """Tests for Filing.exhibit_type computed property."""
+
+    def _make_filing(self, form_type: str) -> Filing:
+        return Filing(
+            cik="",
+            filing_date="",
+            form_type=form_type,
+            accession_number="",
+            directory="",
+            primary_document="",
+        )
+
+    # 10-K variants → Exhibit 21
+    def test_exhibit_type_is_21_for_10k(self):
+        assert self._make_filing("10-K").exhibit_type == "21"
+
+    def test_exhibit_type_is_21_for_10k_slash_a(self):
+        assert self._make_filing("10-K/A").exhibit_type == "21"
+
+    def test_exhibit_type_is_21_for_10ksb(self):
+        assert self._make_filing("10-KSB").exhibit_type == "21"
+
+    def test_exhibit_type_is_21_for_10k_no_dash(self):
+        assert self._make_filing("10K").exhibit_type == "21"
+
+    # 20-F variants → Exhibit 8
+    def test_exhibit_type_is_8_for_20f(self):
+        assert self._make_filing("20-F").exhibit_type == "8"
+
+    def test_exhibit_type_is_8_for_20f_slash_a(self):
+        assert self._make_filing("20-F/A").exhibit_type == "8"
+
+    def test_exhibit_type_is_8_for_20f_no_dash(self):
+        assert self._make_filing("20F").exhibit_type == "8"
+
+
 class TestSubsidiaryDataclass:
     """Tests for the Subsidiary dataclass."""
 
@@ -180,6 +217,7 @@ class TestSubsidiaryDataclass:
             location="Ireland",
             filing_date="2024-09-28",
             form_type="10-K",
+            exhibit_type="21",
             accession_number="0000320193-24-000123",
             exhibit_url="https://www.sec.gov/Archives/edgar/data/320193/ex21.htm",
         )

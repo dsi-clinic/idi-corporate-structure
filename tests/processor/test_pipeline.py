@@ -203,6 +203,22 @@ class TestParseFile:
         # All three match IS_10K pattern
         assert len(filings) == 3
 
+    def test_returns_20f_filings(self, pipeline):
+        data = make_cik_json(
+            forms=["20-F", "10-Q"],
+            accession_numbers=["ACC-20F", "ACC-10Q"],
+            primary_documents=["20f.htm", "10q.htm"],
+            filing_dates=["2025-07-30", "2025-04-30"],
+            cik="0001913847",
+        )
+        mock_zf = self._make_zip_with_cik("CIK0001913847.json", data)
+
+        filings = pipeline._parse_file(mock_zf, "CIK0001913847.json")
+
+        assert len(filings) == 1
+        assert filings[0].form_type == "20-F"
+        assert filings[0].exhibit_type == "8"
+
     def test_ignores_non_cik_files(self, pipeline):
         mock_zf = MagicMock(spec=zipfile.ZipFile)
 
@@ -475,6 +491,66 @@ class TestFetchExhibitContent:
         assert result == {}
         assert pipeline.stats.failed_subsidiaries == 1
 
+    # ── 20-F / Exhibit 8 ──────────────────────────────────────────────────────
+
+    def test_fetches_exhibit_8_for_20f_embedded_ex(self, pipeline, sample_20f_filing):
+        """Filename with EX embedded (not at start) and exhibit 8 number."""
+        item = {"name": "d12345ex8.htm", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        result = pipeline._fetch_exhibit_content(sample_20f_filing, item)
+
+        assert result != {}
+        pipeline.sec_client.query_endpoint.assert_called_once()
+
+    def test_fetches_real_coincheck_exhibit_8_filename(self, pipeline, sample_20f_filing):
+        """Real filename from Coincheck 20-F: passes via 'SUB' in 'SUBSIDIARIES'."""
+        item = {"name": "ex81_listofsubsidiariesofc.htm", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        result = pipeline._fetch_exhibit_content(sample_20f_filing, item)
+
+        assert result != {}
+
+    def test_skips_exhibit_21_for_20f_filing(self, pipeline, sample_20f_filing):
+        """20-F filers use Exhibit 8 — Exhibit 21 files should be ignored."""
+        item = {"name": "d12345ex21.htm", "type": "text.gif"}
+
+        result = pipeline._fetch_exhibit_content(sample_20f_filing, item)
+
+        assert result == {}
+        pipeline.sec_client.query_endpoint.assert_not_called()
+
+    def test_skips_exhibit_8_for_10k_filing(self, pipeline, sample_filing):
+        """10-K filers use Exhibit 21 — Exhibit 8 (tax opinion) should be ignored."""
+        item = {"name": "d12345ex8.htm", "type": "text.gif"}
+
+        result = pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert result == {}
+        pipeline.sec_client.query_endpoint.assert_not_called()
+
+    def test_sub_fallback_matches_for_20f(self, pipeline, sample_20f_filing):
+        """Files containing 'SUB' pass the filter for 20-F filings too."""
+        item = {"name": "subsidiaries.htm", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        result = pipeline._fetch_exhibit_content(sample_20f_filing, item)
+
+        assert result != {}
+
+    def test_builds_correct_url_for_20f_exhibit_8(self, pipeline, sample_20f_filing):
+        item = {"name": "d12345ex8.htm", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        pipeline._fetch_exhibit_content(sample_20f_filing, item)
+
+        call_kwargs = pipeline.sec_client.query_endpoint.call_args
+        called_url = call_kwargs.kwargs.get("sec_url") or call_kwargs.args[0]
+        assert "0001913847" in called_url
+        assert "d12345ex8.htm" in called_url
+        assert "-" not in called_url.split("/")[-2]  # accession number has no dashes
+
 
 # ── _fetch_exhibit ────────────────────────────────────────────────────────────
 
@@ -539,6 +615,7 @@ class TestProcess:
             location="Delaware",
             filing_date="2024-09-28",
             form_type="10-K",
+            exhibit_type="21",
             accession_number="ACC001",
             exhibit_url="https://example.com/ex21.htm",
         )
@@ -629,6 +706,7 @@ class TestExtractWorker:
             location="",
             filing_date=sample_filing.filing_date,
             form_type=sample_filing.form_type,
+            exhibit_type=sample_filing.exhibit_type,
             accession_number=sample_filing.accession_number,
             exhibit_url="",
         )
@@ -697,6 +775,7 @@ class TestResultsWorker:
             location="Delaware",
             filing_date=filing.filing_date,
             form_type=filing.form_type,
+            exhibit_type=filing.exhibit_type,
             accession_number=filing.accession_number,
             exhibit_url="",
         )
@@ -753,6 +832,7 @@ class TestSaveOutput:
             location="Ireland",
             filing_date="2024-09-28",
             form_type="10-K",
+            exhibit_type="21",
             accession_number=accession,
             exhibit_url="https://www.sec.gov/Archives/edgar/data/320193/ex21.htm",
         )
@@ -763,27 +843,27 @@ class TestSaveOutput:
         pipeline.save_output(subsidiaries)
 
         assert pipeline.config.output_file
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert len(df) == 1
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert len(result_df) == 1
 
     def test_output_contains_all_subsidiary_fields(self, pipeline):
         subsidiaries = [self._make_subsidiary("Apple Sales International")]
 
         pipeline.save_output(subsidiaries)
 
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert df.iloc[0]["name"] == "Apple Sales International"
-        assert df.iloc[0]["parent_cik"] == "0000320193"
-        assert df.iloc[0]["location"] == "Ireland"
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert result_df.iloc[0]["name"] == "Apple Sales International"
+        assert result_df.iloc[0]["parent_cik"] == "0000320193"
+        assert result_df.iloc[0]["location"] == "Ireland"
 
     def test_adds_date_added_column(self, pipeline):
         subsidiaries = [self._make_subsidiary("Apple Operations International")]
 
         pipeline.save_output(subsidiaries)
 
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert "date_added" in df.columns
-        assert df.iloc[0]["date_added"] is not None
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert "date_added" in result_df.columns
+        assert result_df.iloc[0]["date_added"] is not None
 
     def test_deduplicates_within_filing(self, pipeline):
         """Same parent_cik + accession_number + name should be written once."""
@@ -794,8 +874,8 @@ class TestSaveOutput:
 
         pipeline.save_output(subsidiaries)
 
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert len(df) == 1
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert len(result_df) == 1
 
     def test_keeps_same_name_across_different_filings(self, pipeline):
         """Same subsidiary name in two different filings should produce two rows."""
@@ -810,8 +890,8 @@ class TestSaveOutput:
 
         pipeline.save_output(subsidiaries)
 
-        df = pd.read_parquet(pipeline.config.output_file)
-        assert len(df) == 2
+        result_df = pd.read_parquet(pipeline.config.output_file)
+        assert len(result_df) == 2
 
 
 # ── display_stats ─────────────────────────────────────────────────────────────

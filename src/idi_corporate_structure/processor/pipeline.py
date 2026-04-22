@@ -121,10 +121,12 @@ class Pipeline(ABC):
 class SubsidiaryPipeline(Pipeline):
     """Pipeline that fetches Exhibit 21 filings from SEC EDGAR and extracts subsidiary data."""
 
-    EX = re.compile(r"\BEX")
+    EX = re.compile(r"EX[-\d]", re.IGNORECASE)
     IS_10K = re.compile("10-?K")
+    IS_20F = re.compile("20-?F")
     IS_DATE = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")
     TWENTYONE = re.compile("[^0-9]21")
+    EIGHT = re.compile("[^0-9]8")
     IS_OVERFLOW = re.compile(r"-submissions-\d+\.json$")
 
     _INPUT_SAMPLE_SIZE = int(os.environ.get("INPUT_SAMPLE_SIZE", 0))
@@ -268,7 +270,7 @@ class SubsidiaryPipeline(Pipeline):
         """
         filings = []
         for form, accession_number, primary_document, filing_date in filings_zip:
-            if self.IS_10K.match(form):
+            if self.IS_10K.match(form) or self.IS_20F.match(form):
                 filings.append(
                     self._create_filing(
                         accession_number=accession_number,
@@ -584,8 +586,11 @@ class SubsidiaryPipeline(Pipeline):
         name = item["name"].upper()
         accession = filing.accession_number.replace("-", "")
 
+        num = filing.exhibit_type
+        num_re = self.TWENTYONE if num == "21" else self.EIGHT
+
         if not (
-            (self.EX.search(name) and (name.startswith("21") or self.TWENTYONE.search(name)))
+            (self.EX.search(name) and (name.startswith(num) or num_re.search(name)))
             or "SUB" in name
         ):
             return {}
@@ -596,7 +601,6 @@ class SubsidiaryPipeline(Pipeline):
             return {}
 
         sec_url = f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
-
         if ext == "PDF":
             exhibit_content = self._fetch_pdf_content(filing, item, sec_url)
         else:
@@ -698,11 +702,15 @@ class SubsidiaryPipeline(Pipeline):
         Returns:
             None
         """
-        df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
-        df = df.drop_duplicates(subset=["parent_cik", "accession_number", "name"])
-        df["date_added"] = datetime.datetime.now(datetime.UTC).isoformat()
-        df.to_parquet(self.config.output_file)
-        self.logger.info("Saved %d subsidiaries to %s", len(df), self.config.output_file)
+        subsidiaries_df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
+        subsidiaries_df = subsidiaries_df.drop_duplicates(
+            subset=["parent_cik", "accession_number", "name"]
+        )
+        subsidiaries_df["date_added"] = datetime.datetime.now(datetime.UTC).isoformat()
+        subsidiaries_df.to_parquet(self.config.output_file)
+        self.logger.info(
+            "Saved %d subsidiaries to %s", len(subsidiaries_df), self.config.output_file
+        )
 
     def display_stats(self) -> None:
         """Log a formatted summary of pipeline statistics on completion.

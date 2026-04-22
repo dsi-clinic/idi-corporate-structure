@@ -58,6 +58,20 @@ def make_exhibit_response(content: str = "<html>Subsidiaries</html>") -> dict:
 
 
 @pytest.fixture
+def sample_20f_filing() -> Filing:
+    """A realistic 20-F Filing dataclass instance (Coincheck Group)."""
+    return Filing(
+        cik="0001913847",
+        filing_date="2025-07-30",
+        form_type="20-F",
+        accession_number="0001628280-25-036727",
+        directory="https://www.sec.gov/Archives/edgar/data/1913847/000162828025036727/index.json",
+        primary_document="",
+        company_name="Coincheck Group",
+    )
+
+
+@pytest.fixture
 def sample_filing() -> Filing:
     """A realistic Filing dataclass instance."""
     return Filing(

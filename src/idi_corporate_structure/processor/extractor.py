@@ -164,6 +164,7 @@ class GptExtractor(Extractor):
                 parent_location=filing.location,
                 filing_date=filing.filing_date,
                 form_type=filing.form_type,
+                exhibit_type=filing.exhibit_type,
                 accession_number=filing.accession_number,
                 exhibit_url=document["url"],
                 name=sub["name"],

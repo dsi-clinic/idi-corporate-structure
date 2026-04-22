@@ -702,11 +702,15 @@ class SubsidiaryPipeline(Pipeline):
         Returns:
             None
         """
-        df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
-        df = df.drop_duplicates(subset=["parent_cik", "accession_number", "name"])
-        df["date_added"] = datetime.datetime.now(datetime.UTC).isoformat()
-        df.to_parquet(self.config.output_file)
-        self.logger.info("Saved %d subsidiaries to %s", len(df), self.config.output_file)
+        subsidiaries_df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
+        subsidiaries_df = subsidiaries_df.drop_duplicates(
+            subset=["parent_cik", "accession_number", "name"]
+        )
+        subsidiaries_df["date_added"] = datetime.datetime.now(datetime.UTC).isoformat()
+        subsidiaries_df.to_parquet(self.config.output_file)
+        self.logger.info(
+            "Saved %d subsidiaries to %s", len(subsidiaries_df), self.config.output_file
+        )
 
     def display_stats(self) -> None:
         """Log a formatted summary of pipeline statistics on completion.

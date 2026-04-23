@@ -11,13 +11,17 @@ extracted from a PDF), return JSON in this shape:
 
 Fields:
 
-- name: the subsidiary name. If the input is HTML, decode HTML entities
-(e.g. "PF&amp;F Holdings Corporation" → "PF&F Holdings Corporation").
-Otherwise copy the name exactly as it appears. Do not expand or drop
-abbreviations (keep "Co.", "Inc.", "Ltd."). Do not prepend section
-headers or geographic labels — if a "Canada" header precedes
-"U-Haul Co. (Canada) Ltd.", the name is "U-Haul Co. (Canada) Ltd.",
-not "Canada: U-Haul Co. (Canada) Ltd.".
+- name: the subsidiary name, copied exactly as it appears in the source — do
+not decode HTML entities, paraphrase, or normalise in any way. Do not alter,
+drop, or reorder any tokens:
+    - Preserve all punctuation: "Abbott Laboratories, Ireland, Limited" must NOT
+    become "Abbott Laboratories Ireland Limited"
+    - Preserve dual-language legal suffixes verbatim: "Arrow ECS SA NV" must NOT
+    become "Arrow ECS NV" — even if two suffixes appear to mean the same thing
+    - Do not expand or drop abbreviations (keep "Co.", "Inc.", "Ltd.", "S.A.")
+    - Do not prepend section headers or geographic labels — if a "Canada" header
+    precedes "U-Haul Co. (Canada) Ltd.", the name is "U-Haul Co. (Canada) Ltd.",
+    not "Canada: U-Haul Co. (Canada) Ltd."
 
 - location: the place of incorporation or other location, or null if not
 provided.

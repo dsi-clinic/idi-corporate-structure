@@ -1,6 +1,7 @@
 """Extractors for parsing subsidiary data from SEC exhibit documents."""
 
 # Standard imports
+import html as _html
 import importlib.resources
 import json
 from abc import ABC, abstractmethod
@@ -145,6 +146,54 @@ class GptExtractor(Extractor):
 
         return " ".join(quote.split()) in " ".join(document.split())
 
+    @staticmethod
+    def _is_name_grounded(name: str, quote:str) -> bool:
+        """Check if a name is grounded in a source quote.
+
+        Args:
+            name: The name to check.
+            quote: The source quote to check.
+
+        Returns:
+            True if the name is grounded in the quote, False otherwise.
+        """
+        if not name or not quote:
+            return False
+
+        decoded_name = " ".join(_html.unescape(name).split()).lower()
+        decoded_quote = " ".join(_html.unescape(quote).split()).lower()
+        return decoded_name in decoded_quote
+
+    def _locate_grounded_subsidiaries(self, subsidiaries: list[dict], document: dict) -> list[dict]:
+        """Locate grounded subsidiaries in a document.
+
+        Args:
+            subsidiaries: The subsidiaries to check.
+            document: The document to check the subsidiaries in.
+
+        Returns:
+            List of grounded subsidiaries.
+        """
+        grounded_subsidiaries = []
+        dropped_count = 0
+        for sub in subsidiaries:
+            name = sub.get("name", "")
+            quote = sub.get("source_quote", "")
+            if not self._is_grounded(quote, document.get("data", "")):
+                self._logger.warning("Dropped %r from %s (ungrounded quote)", name, document.get("url", ""))
+                dropped_count += 1
+                continue
+            if not self._is_name_grounded(name, quote):
+                self._logger.warning("Dropped %r from %s (ungrounded name)", name, document.get("url", ""))
+                dropped_count += 1
+                continue
+            grounded_subsidiaries.append(sub)
+
+        if dropped_count:
+            self._logger.warning("Dropped %d ungrounded subsidiaries from %s", dropped_count, document.get("url", ""))
+
+        return grounded_subsidiaries
+
     def extract(self, filing: Filing, document: dict) -> list[Subsidiary]:
         """Extract subsidiaries from an exhibit document using GPT.
 
@@ -168,19 +217,7 @@ class GptExtractor(Extractor):
         """
         summary = self._summarize(document["data"])
 
-        grounded_subsidiaries = [
-            sub
-            for sub in summary["subsidiaries"]
-            if self._is_grounded(sub.get("source_quote", ""), document["data"])
-        ]
-
-        dropped = len(summary["subsidiaries"]) - len(grounded_subsidiaries)
-        if dropped:
-            self._logger.warning(
-                "Dropped %d ungrounded subsidiaries from %s",
-                dropped,
-                document["url"],
-            )
+        grounded_subsidiaries = self._locate_grounded_subsidiaries(summary["subsidiaries"], document)
 
         return [
             Subsidiary(
@@ -192,7 +229,7 @@ class GptExtractor(Extractor):
                 exhibit_type=filing.exhibit_type,
                 accession_number=filing.accession_number,
                 exhibit_url=document["url"],
-                name=sub["name"],
+                name=_html.unescape(sub["name"]),
                 location=sub.get("location") or "",
                 source_quote=sub.get("source_quote") or "",
             )

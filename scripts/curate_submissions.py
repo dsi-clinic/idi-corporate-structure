@@ -194,9 +194,7 @@ def main() -> None:
     parser.add_argument(
         "--input", required=True, type=pathlib.Path, help="Path to input submissions.zip"
     )
-    parser.add_argument(
-        "--output", required=True, type=pathlib.Path, help="Path to output zip"
-    )
+    parser.add_argument("--output", required=True, type=pathlib.Path, help="Path to output zip")
     parser.add_argument(
         "--year",
         type=int,

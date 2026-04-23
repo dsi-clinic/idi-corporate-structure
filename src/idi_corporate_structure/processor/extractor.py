@@ -163,7 +163,9 @@ class GptExtractor(Extractor):
 
         return _normalize(name) in _normalize(quote)
 
-    def _locate_grounded_subsidiaries(self, subsidiaries: list[dict], document: dict) -> tuple[list[dict], int]:
+    def _locate_grounded_subsidiaries(
+        self, subsidiaries: list[dict], document: dict
+    ) -> tuple[list[dict], int]:
         """Locate grounded subsidiaries in a document.
 
         Args:
@@ -179,17 +181,23 @@ class GptExtractor(Extractor):
             name = sub.get("name", "")
             quote = sub.get("source_quote", "")
             if not self._is_grounded(quote, document.get("data", "")):
-                self._logger.warning("Dropped %r from %s (ungrounded quote)", name, document.get("url", ""))
+                self._logger.warning(
+                    "Dropped %r from %s (ungrounded quote)", name, document.get("url", "")
+                )
                 dropped_count += 1
                 continue
             if not self._is_name_grounded(name, quote):
-                self._logger.warning("Dropped %r from %s (ungrounded name)", name, document.get("url", ""))
+                self._logger.warning(
+                    "Dropped %r from %s (ungrounded name)", name, document.get("url", "")
+                )
                 dropped_count += 1
                 continue
             grounded_subsidiaries.append(sub)
 
         if dropped_count:
-            self._logger.warning("Dropped %d ungrounded subsidiaries from %s", dropped_count, document.get("url", ""))
+            self._logger.warning(
+                "Dropped %d ungrounded subsidiaries from %s", dropped_count, document.get("url", "")
+            )
 
         return grounded_subsidiaries, dropped_count
 
@@ -216,7 +224,9 @@ class GptExtractor(Extractor):
         """
         summary = self._summarize(document["data"])
 
-        grounded_subsidiaries, dropped = self._locate_grounded_subsidiaries(summary["subsidiaries"], document)
+        grounded_subsidiaries, dropped = self._locate_grounded_subsidiaries(
+            summary["subsidiaries"], document
+        )
 
         subsidiaries = [
             Subsidiary(

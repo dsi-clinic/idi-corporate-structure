@@ -24,7 +24,7 @@ class Extractor(ABC):
     """Interface for extracting subsidiaries from a single exhibit document."""
 
     @abstractmethod
-    def extract(self, filing: Filing, document: dict) -> list[Subsidiary]:
+    def extract(self, filing: Filing, document: dict) -> tuple[list[Subsidiary], int]:
         """Extract subsidiaries from a single exhibit document.
 
         Args:
@@ -32,7 +32,8 @@ class Extractor(ABC):
             document: Dict with 'url' and 'data' keys for the exhibit content.
 
         Returns:
-            List of extracted Subsidiary objects.
+            Tuple of (extracted Subsidiary objects, count of subsidiaries dropped
+            during grounding checks).
         """
         ...
 
@@ -147,7 +148,7 @@ class GptExtractor(Extractor):
         return " ".join(quote.split()) in " ".join(document.split())
 
     @staticmethod
-    def _is_name_grounded(name: str, quote:str) -> bool:
+    def _is_name_grounded(name: str, quote: str) -> bool:
         """Check if a name is grounded in a source quote.
 
         Args:
@@ -160,11 +161,9 @@ class GptExtractor(Extractor):
         if not name or not quote:
             return False
 
-        decoded_name = " ".join(_html.unescape(name).split()).lower()
-        decoded_quote = " ".join(_html.unescape(quote).split()).lower()
-        return decoded_name in decoded_quote
+        return _normalize(name) in _normalize(quote)
 
-    def _locate_grounded_subsidiaries(self, subsidiaries: list[dict], document: dict) -> list[dict]:
+    def _locate_grounded_subsidiaries(self, subsidiaries: list[dict], document: dict) -> tuple[list[dict], int]:
         """Locate grounded subsidiaries in a document.
 
         Args:
@@ -192,7 +191,7 @@ class GptExtractor(Extractor):
         if dropped_count:
             self._logger.warning("Dropped %d ungrounded subsidiaries from %s", dropped_count, document.get("url", ""))
 
-        return grounded_subsidiaries
+        return grounded_subsidiaries, dropped_count
 
     def extract(self, filing: Filing, document: dict) -> list[Subsidiary]:
         """Extract subsidiaries from an exhibit document using GPT.
@@ -217,9 +216,9 @@ class GptExtractor(Extractor):
         """
         summary = self._summarize(document["data"])
 
-        grounded_subsidiaries = self._locate_grounded_subsidiaries(summary["subsidiaries"], document)
+        grounded_subsidiaries, dropped = self._locate_grounded_subsidiaries(summary["subsidiaries"], document)
 
-        return [
+        subsidiaries = [
             Subsidiary(
                 parent_cik=filing.cik,
                 parent_name=filing.company_name,
@@ -235,3 +234,11 @@ class GptExtractor(Extractor):
             )
             for sub in grounded_subsidiaries
         ]
+        return subsidiaries, dropped
+
+
+def _normalize(s: str) -> str:
+    """Decode HTML entities, normalize apostrophes and whitespace, and lowercase."""
+    s = _html.unescape(s)
+    s = s.replace("\u2019", "'").replace("\u2018", "'")
+    return " ".join(s.split()).lower()

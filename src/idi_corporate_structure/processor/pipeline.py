@@ -494,7 +494,10 @@ class SubsidiaryPipeline(Pipeline):
         while True:
             filing, exhibit_contents = work_queue.get()
             try:
-                subsidiaries = self.extractor.extract(filing, exhibit_contents)
+                subsidiaries, dropped = self.extractor.extract(filing, exhibit_contents)
+
+                if dropped:
+                    self.stats.increment("dropped_subsidiaries", dropped)
 
                 if len(subsidiaries) == 0:
                     self.logger.warning(

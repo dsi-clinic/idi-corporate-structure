@@ -625,7 +625,9 @@ class TestProcess:
         exhibit_content = [make_exhibit_response()]
 
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=exhibit_content)
-        pipeline.extractor.extract.side_effect = [([self._make_subsidiary(f.cik)], 0) for f in filings]
+        pipeline.extractor.extract.side_effect = [
+            ([self._make_subsidiary(f.cik)], 0) for f in filings
+        ]
 
         results = pipeline.process(filings)
 

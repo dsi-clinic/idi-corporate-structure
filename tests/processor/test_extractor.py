@@ -45,7 +45,7 @@ class TestGptExtractor:
                 ]
             ),
         )
-        result = extractor.extract(sample_filing, make_exhibit_response())
+        result, _ = extractor.extract(sample_filing, make_exhibit_response())
 
         assert len(result) == 2
         assert all(isinstance(s, Subsidiary) for s in result)
@@ -71,7 +71,7 @@ class TestGptExtractor:
                 ]
             ),
         )
-        result = extractor.extract(sample_filing, make_exhibit_response())
+        result, _ = extractor.extract(sample_filing, make_exhibit_response())
         s = result[0]
 
         assert s.parent_cik == sample_filing.cik
@@ -96,7 +96,7 @@ class TestGptExtractor:
             ),
         )
         document = make_exhibit_response()
-        result = extractor.extract(sample_filing, document)
+        result, _ = extractor.extract(sample_filing, document)
 
         assert result[0].exhibit_url == document["url"]
 
@@ -115,7 +115,7 @@ class TestGptExtractor:
                 ]
             ),
         )
-        result = extractor.extract(sample_filing, make_exhibit_response())
+        result, _ = extractor.extract(sample_filing, make_exhibit_response())
 
         assert result[0].location == ""
         assert result[0].source_quote == _QUOTE_APPLE_OPS
@@ -127,7 +127,7 @@ class TestGptExtractor:
             "query_endpoint",
             return_value=_make_openai_response([]),
         )
-        result = extractor.extract(sample_filing, make_exhibit_response())
+        result, _ = extractor.extract(sample_filing, make_exhibit_response())
 
         assert result == []
 
@@ -160,7 +160,7 @@ class TestGptExtractor:
                 ]
             ),
         )
-        result = extractor.extract(sample_filing, make_exhibit_response())
+        result, _ = extractor.extract(sample_filing, make_exhibit_response())
 
         assert result[0].source_quote == _QUOTE_APPLE_OPS
 
@@ -180,7 +180,7 @@ class TestGptExtractor:
                 ]
             ),
         )
-        result = extractor.extract(sample_filing, make_exhibit_response())
+        result, _ = extractor.extract(sample_filing, make_exhibit_response())
 
         assert result == []
 
@@ -205,7 +205,7 @@ class TestGptExtractor:
                 ]
             ),
         )
-        result = extractor.extract(sample_filing, make_exhibit_response())
+        result, _ = extractor.extract(sample_filing, make_exhibit_response())
 
         assert len(result) == 1
         assert result[0].name == "Apple Operations LLC"
@@ -220,7 +220,7 @@ class TestGptExtractor:
                 [{"name": "Apple Operations LLC", "location": "Delaware", "source_quote": ""}]
             ),
         )
-        result = extractor.extract(sample_filing, make_exhibit_response())
+        result, _ = extractor.extract(sample_filing, make_exhibit_response())
 
         assert result == []
 

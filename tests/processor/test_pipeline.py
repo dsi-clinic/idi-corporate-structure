@@ -625,7 +625,7 @@ class TestProcess:
         exhibit_content = [make_exhibit_response()]
 
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=exhibit_content)
-        pipeline.extractor.extract.side_effect = [[self._make_subsidiary(f.cik)] for f in filings]
+        pipeline.extractor.extract.side_effect = [([self._make_subsidiary(f.cik)], 0) for f in filings]
 
         results = pipeline.process(filings)
 
@@ -653,8 +653,8 @@ class TestProcess:
         subsidiary = self._make_subsidiary("CIK0000000000")
         pipeline.extractor.extract.side_effect = [
             RuntimeError("GPT error"),
-            [subsidiary],
-            [subsidiary],
+            ([subsidiary], 0),
+            ([subsidiary], 0),
         ]
 
         results = pipeline.process(filings)
@@ -666,10 +666,10 @@ class TestProcess:
     def test_increments_total_subsidiaries(self, pipeline, mocker):
         filings = [self._make_filing(0)]
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=[make_exhibit_response()])
-        pipeline.extractor.extract.return_value = [
-            self._make_subsidiary("CIK0000000000"),
-            self._make_subsidiary("CIK0000000000"),
-        ]
+        pipeline.extractor.extract.return_value = (
+            [self._make_subsidiary("CIK0000000000"), self._make_subsidiary("CIK0000000000")],
+            0,
+        )
 
         pipeline.process(filings)
 
@@ -710,7 +710,7 @@ class TestExtractWorker:
             accession_number=sample_filing.accession_number,
             exhibit_url="",
         )
-        pipeline.extractor.extract.return_value = [subsidiary]
+        pipeline.extractor.extract.return_value = ([subsidiary], 0)
 
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 
+from idi_corporate_structure.processor.extractor import _html_to_text as html_to_text
 from idi_corporate_structure.processor.failures import FailureType
 from idi_corporate_structure.processor.types import Filing, Subsidiary
 from tests.conftest import make_cik_json, make_directory_response, make_exhibit_response
@@ -376,7 +377,7 @@ class TestFetchExhibitContent:
         result = pipeline._fetch_exhibit_content(sample_filing, item)
 
         assert result["url"] is not None
-        assert result["data"] == make_exhibit_response()["data"]
+        assert result["data"] == html_to_text(make_exhibit_response()["data"])
         pipeline.sec_client.query_endpoint.assert_called_once()
 
     def test_fetches_exhibit_named_21_prefix(self, pipeline, sample_filing):
@@ -439,6 +440,33 @@ class TestFetchExhibitContent:
         assert "0000320193" in called_url
         assert "d12345ex21.htm" in called_url
         assert "-" not in called_url.split("/")[-2]  # accession number has no dashes
+
+    def test_increments_htm_counter(self, pipeline, sample_filing):
+        item = {"name": "d12345ex21.htm", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert pipeline.stats.htm_exhibits == 1
+        assert pipeline.stats.html_exhibits == 0
+        assert pipeline.stats.txt_exhibits == 0
+        assert pipeline.stats.pdf_exhibits == 0
+
+    def test_increments_html_counter(self, pipeline, sample_filing):
+        item = {"name": "d12345ex21.html", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert pipeline.stats.html_exhibits == 1
+
+    def test_increments_txt_counter(self, pipeline, sample_filing):
+        item = {"name": "d12345ex21.txt", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert pipeline.stats.txt_exhibits == 1
 
     def test_fetches_pdf_exhibit_and_extracts_text(self, pipeline, sample_filing, mocker):
         item = {"name": "d12345ex21.pdf", "type": "text.gif"}
@@ -626,7 +654,7 @@ class TestProcess:
 
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=exhibit_content)
         pipeline.extractor.extract.side_effect = [
-            ([self._make_subsidiary(f.cik)], 0) for f in filings
+            ([self._make_subsidiary(f.cik)], 0, 0) for f in filings
         ]
 
         results = pipeline.process(filings)
@@ -655,8 +683,8 @@ class TestProcess:
         subsidiary = self._make_subsidiary("CIK0000000000")
         pipeline.extractor.extract.side_effect = [
             RuntimeError("GPT error"),
-            ([subsidiary], 0),
-            ([subsidiary], 0),
+            ([subsidiary], 0, 0),
+            ([subsidiary], 0, 0),
         ]
 
         results = pipeline.process(filings)
@@ -670,6 +698,7 @@ class TestProcess:
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=[make_exhibit_response()])
         pipeline.extractor.extract.return_value = (
             [self._make_subsidiary("CIK0000000000"), self._make_subsidiary("CIK0000000000")],
+            0,
             0,
         )
 
@@ -712,7 +741,7 @@ class TestExtractWorker:
             accession_number=sample_filing.accession_number,
             exhibit_url="",
         )
-        pipeline.extractor.extract.return_value = ([subsidiary], 0)
+        pipeline.extractor.extract.return_value = ([subsidiary], 0, 0)
 
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
@@ -1162,21 +1191,21 @@ class TestDropStaleRows:
 
     def test_drops_rows_matching_stale_key(self, pipeline):
         pipeline._stale_filing_keys = {("CIK001", "ACC001")}
-        df = pd.DataFrame(
+        subs = pd.DataFrame(
             [
                 {"parent_cik": "CIK001", "accession_number": "ACC001", "name": "Sub A"},
                 {"parent_cik": "CIK002", "accession_number": "ACC002", "name": "Sub B"},
             ]
         )
 
-        result = pipeline._drop_stale_rows(df)
+        result = pipeline._drop_stale_rows(subs)
 
         assert len(result) == 1
         assert result.iloc[0]["name"] == "Sub B"
 
     def test_drops_multiple_rows_for_same_filing(self, pipeline):
         pipeline._stale_filing_keys = {("CIK001", "ACC001")}
-        df = pd.DataFrame(
+        subs = pd.DataFrame(
             [
                 {"parent_cik": "CIK001", "accession_number": "ACC001", "name": "Sub A"},
                 {"parent_cik": "CIK001", "accession_number": "ACC001", "name": "Sub B"},
@@ -1184,32 +1213,36 @@ class TestDropStaleRows:
             ]
         )
 
-        result = pipeline._drop_stale_rows(df)
+        result = pipeline._drop_stale_rows(subs)
 
         assert len(result) == 1
         assert result.iloc[0]["name"] == "Sub C"
 
     def test_returns_df_unchanged_when_no_stale_keys(self, pipeline):
         pipeline._stale_filing_keys = set()
-        df = pd.DataFrame([{"parent_cik": "CIK001", "accession_number": "ACC001", "name": "Sub A"}])
+        subs = pd.DataFrame(
+            [{"parent_cik": "CIK001", "accession_number": "ACC001", "name": "Sub A"}]
+        )
 
-        result = pipeline._drop_stale_rows(df)
+        result = pipeline._drop_stale_rows(subs)
 
         assert len(result) == 1
 
     def test_returns_empty_df_unchanged(self, pipeline):
         pipeline._stale_filing_keys = {("CIK001", "ACC001")}
-        df = pd.DataFrame(columns=["parent_cik", "accession_number", "name"])
+        subs = pd.DataFrame(columns=["parent_cik", "accession_number", "name"])
 
-        result = pipeline._drop_stale_rows(df)
+        result = pipeline._drop_stale_rows(subs)
 
         assert result.empty
 
     def test_does_not_drop_non_stale_filing(self, pipeline):
         pipeline._stale_filing_keys = {("CIK001", "ACC001")}
-        df = pd.DataFrame([{"parent_cik": "CIK002", "accession_number": "ACC002", "name": "Sub B"}])
+        subs = pd.DataFrame(
+            [{"parent_cik": "CIK002", "accession_number": "ACC002", "name": "Sub B"}]
+        )
 
-        result = pipeline._drop_stale_rows(df)
+        result = pipeline._drop_stale_rows(subs)
 
         assert len(result) == 1
 

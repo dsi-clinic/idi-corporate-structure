@@ -22,7 +22,7 @@ from idi_corporate_structure.common.api import SecClient
 from idi_corporate_structure.common.failures import FailureRegistry
 from idi_corporate_structure.common.logs import get_logger
 from idi_corporate_structure.common.storage import open_zip
-from idi_corporate_structure.processor.extractor import DocumentError, GptExtractor
+from idi_corporate_structure.processor.extractor import DocumentError, GptExtractor, _html_to_text
 from idi_corporate_structure.processor.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
@@ -494,10 +494,15 @@ class SubsidiaryPipeline(Pipeline):
         while True:
             filing, exhibit_contents = work_queue.get()
             try:
-                subsidiaries, dropped = self.extractor.extract(filing, exhibit_contents)
+                subsidiaries, ungrounded_name, ungrounded_location = self.extractor.extract(
+                    filing, exhibit_contents
+                )
 
-                if dropped:
-                    self.stats.increment("dropped_subsidiaries", dropped)
+                if ungrounded_name:
+                    self.stats.increment("ungrounded_name", ungrounded_name)
+
+                if ungrounded_location:
+                    self.stats.increment("ungrounded_location", ungrounded_location)
 
                 if len(subsidiaries) == 0:
                     self.logger.warning(
@@ -624,8 +629,38 @@ class SubsidiaryPipeline(Pipeline):
                 )
         return exhibit_content
 
+    def _fetch_html_content(self, name: str, filing: Filing, sec_url: str) -> dict:
+        """Fetch HTM/HTML content from the SEC and convert it to plain text.
+
+        Mirrors ``_fetch_pdf_content``: fetches the document and pre-processes
+        it (HTML → text) so the extractor works on the same string it hands to
+        the model and uses for grounding.
+
+        Args:
+            name: Name of the item
+            filing: Filing object to fetch HTML content from
+            sec_url: URL of the HTML file
+
+        Returns:
+            Dict with ``"url"`` and ``"data"`` (plain text) keys.
+        """
+        item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_json=False)
+        if item_response.get("data"):
+            exhibit_content = {"url": sec_url, "data": _html_to_text(item_response["data"])}
+        else:
+            exhibit_content = {}
+            self.logger.error(
+                "Exhibit %s - %s - %s does not have content.",
+                name,
+                filing.cik,
+                filing.accession_number,
+            )
+            self.stats.increment("failed_subsidiaries")
+            self.failure_registry.add((filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT)
+        return exhibit_content
+
     def _fetch_other_content(self, name: str, filing: Filing, sec_url: str) -> dict:
-        """Fetch other content from the SEC including HTM, HTML, and TXT files.
+        """Fetch plain-text exhibit content from the SEC.
 
         Args:
             name: Name of the item
@@ -683,8 +718,11 @@ class SubsidiaryPipeline(Pipeline):
             return {}
 
         sec_url = f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
+        self.stats.increment(f"{ext.lower()}_exhibits")
         if ext == "PDF":
             exhibit_content = self._fetch_pdf_content(filing, item, sec_url)
+        elif ext in ("HTM", "HTML"):
+            exhibit_content = self._fetch_html_content(name, filing, sec_url)
         else:
             exhibit_content = self._fetch_other_content(name, filing, sec_url)
 
@@ -876,8 +914,14 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("    Total:    %d", self.stats.total_subsidiaries)
         self.logger.info("    Failed:   %d", self.stats.failed_subsidiaries)
         self.logger.info("    Zero:     %d", self.stats.zero_subsidiaries)
-        self.logger.info("    Ungrounded: %d", self.stats.ungrounded_subsidiaries)
-        self.logger.info("    Dropped:    %d", self.stats.dropped_subsidiaries)
+        self.logger.info("    Ungrounded name:     %d", self.stats.ungrounded_name)
+        self.logger.info("    Ungrounded location: %d", self.stats.ungrounded_location)
+        self.logger.info("    Dropped:             %d", self.stats.dropped_subsidiaries)
+        self.logger.info("  Exhibits by type")
+        self.logger.info("    HTM:  %d", self.stats.htm_exhibits)
+        self.logger.info("    HTML: %d", self.stats.html_exhibits)
+        self.logger.info("    TXT:  %d", self.stats.txt_exhibits)
+        self.logger.info("    PDF:  %d", self.stats.pdf_exhibits)
         self.logger.info("=" * 40)
 
     def run(self) -> None:

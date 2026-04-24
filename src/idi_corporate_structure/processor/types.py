@@ -82,8 +82,13 @@ class PipelineStats:
     total_subsidiaries: int = 0
     failed_subsidiaries: int = 0
     zero_subsidiaries: int = 0
-    ungrounded_subsidiaries: int = 0
+    ungrounded_name: int = 0
+    ungrounded_location: int = 0
     dropped_subsidiaries: int = 0
+    htm_exhibits: int = 0
+    html_exhibits: int = 0
+    txt_exhibits: int = 0
+    pdf_exhibits: int = 0
 
     def __post_init__(self) -> None:
         """Initialize the pipeline stats."""

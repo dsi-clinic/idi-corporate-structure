@@ -4,7 +4,11 @@
 import html as _html
 import importlib.resources
 import json
+import re
 from abc import ABC, abstractmethod
+
+# Third-party imports
+from bs4 import BeautifulSoup, Comment
 
 # Application imports
 from idi_corporate_structure.common.api import OpenAiClient
@@ -12,6 +16,28 @@ from idi_corporate_structure.common.logs import get_logger
 from idi_corporate_structure.processor.types import Filing, Subsidiary
 
 _PROMPTS = importlib.resources.files("idi_corporate_structure.processor.prompts")
+
+_BLOCK_TAGS = frozenset(
+    {
+        "br",
+        "div",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "li",
+        "ol",
+        "p",
+        "table",
+        "tr",
+        "ul",
+    }
+)
+_CELL_TAGS = frozenset({"td", "th"})
+_INLINE_WS_RE = re.compile(r"[ \t\f\v]+")
+_MULTINEWLINE_RE = re.compile(r"\n{3,}")
 
 
 class DocumentError(Exception):
@@ -132,74 +158,94 @@ class GptExtractor(Extractor):
         return json.loads(content)
 
     @staticmethod
-    def _is_grounded(quote: str, document: str) -> bool:
-        """Check if a source quote is grounded in the document.
-
-        Args:
-            quote: The source quote to check.
-            document: The document to check the quote in.
-
-        Returns:
-            True if the quote is grounded in the document, False otherwise.
-        """
-        if not quote:
-            return False
-
-        return " ".join(quote.split()) in " ".join(document.split())
-
-    @staticmethod
-    def _is_name_grounded(name: str, quote: str) -> bool:
-        """Check if a name is grounded in a source quote.
+    def _is_name_in_document(name: str, document: str) -> bool:
+        """Check if a name appears in the document (the source of truth).
 
         Args:
             name: The name to check.
-            quote: The source quote to check.
+            document: The document text to check for the name.
 
         Returns:
-            True if the name is grounded in the quote, False otherwise.
+            True if the normalized name is a substring of the normalized
+            document, False otherwise.
         """
-        if not name or not quote:
+        if not name:
             return False
 
-        return _normalize(name) in _normalize(quote)
+        return _normalize(name) in _normalize(document)
+
+    def _is_location_grounded(
+        self, name: str, location: str, doc_text_normalized: str, doc_url: str
+    ) -> int:
+        """Check if a location is near a name in the document and logs a warning if not.
+
+        Args:
+            name: The name to check.
+            location: The location to check.
+            doc_text_normalized: The normalized document text to check for the name and location.
+            doc_url: The URL of the document.
+
+        Returns:
+            The number of ungrounded locations.
+        """
+        ungrounded_location = 0
+        if location:
+            name_pos = doc_text_normalized.find(_normalize(name))
+            name_len = len(_normalize(name))
+            window = doc_text_normalized[max(0, name_pos - 200) : name_pos + name_len + 200]
+
+            if _normalize(location) not in window:
+                self._logger.debug("Location %r not near name %r @ %s", location, name, doc_url)
+                ungrounded_location += 1
+        return ungrounded_location
 
     def _locate_grounded_subsidiaries(
         self, subsidiaries: list[dict], document: dict
-    ) -> tuple[list[dict], int]:
-        """Locate grounded subsidiaries in a document.
+    ) -> tuple[list[dict], int, int]:
+        """Locate subsidiaries whose names are grounded in the document.
+
+        The document is the source of truth. A subsidiary is kept if its
+        ``name`` appears in the document. The model's ``source_quote`` is
+        advisory: a mismatch between quote and document is logged at DEBUG
+        level but does not drop the row.
 
         Args:
-            subsidiaries: The subsidiaries to check.
-            document: The document to check the subsidiaries in.
+            subsidiaries: The subsidiaries returned by the model.
+            document: Dict with ``"url"`` and ``"data"`` (text) keys.
 
         Returns:
-            List of grounded subsidiaries.
+            Tuple of (kept subsidiaries, count dropped for missing name, count dropped for missing location).
         """
         grounded_subsidiaries = []
-        dropped_count = 0
+        ungrounded_name = 0
+        ungrounded_location = 0
+
+        doc_text = document.get("data", "")
+        doc_url = document.get("url", "")
+        doc_text_normalized = _normalize(doc_text)
+
         for sub in subsidiaries:
             name = sub.get("name", "")
+            if not self._is_name_in_document(name, doc_text):
+                self._logger.warning("Dropped %r from %s (name not in document)", name, doc_url)
+                ungrounded_name += 1
+                continue
+
             quote = sub.get("source_quote", "")
-            if not self._is_grounded(quote, document.get("data", "")):
-                self._logger.warning(
-                    "Dropped %r from %s (ungrounded quote)", name, document.get("url", "")
-                )
-                dropped_count += 1
-                continue
-            if not self._is_name_grounded(name, quote):
-                self._logger.warning(
-                    "Dropped %r from %s (ungrounded name)", name, document.get("url", "")
-                )
-                dropped_count += 1
-                continue
+            if quote and _normalize(quote) not in doc_text_normalized:
+                self._logger.debug("Quote not in document for %r @ %s", name, doc_url)
+
+            ungrounded_location += self._is_location_grounded(
+                name, sub.get("location") or "", doc_text_normalized, doc_url
+            )
             grounded_subsidiaries.append(sub)
 
-        if dropped_count:
+        if ungrounded_name:
             self._logger.warning(
-                "Dropped %d ungrounded subsidiaries from %s", dropped_count, document.get("url", "")
+                "Dropped %d ungrounded subsidiaries from %s", ungrounded_name, doc_url
             )
 
-        return grounded_subsidiaries, dropped_count
+        return grounded_subsidiaries, ungrounded_name, ungrounded_location
 
     def extract(self, filing: Filing, document: dict) -> list[Subsidiary]:
         """Extract subsidiaries from an exhibit document using GPT.
@@ -224,8 +270,8 @@ class GptExtractor(Extractor):
         """
         summary = self._summarize(document["data"])
 
-        grounded_subsidiaries, dropped = self._locate_grounded_subsidiaries(
-            summary["subsidiaries"], document
+        grounded_subsidiaries, ungrounded_name, ungrounded_location = (
+            self._locate_grounded_subsidiaries(summary["subsidiaries"], document)
         )
 
         subsidiaries = [
@@ -244,11 +290,46 @@ class GptExtractor(Extractor):
             )
             for sub in grounded_subsidiaries
         ]
-        return subsidiaries, dropped
+        return subsidiaries, ungrounded_name, ungrounded_location
+
+
+def _html_to_text(raw_html: str) -> str:
+    """Convert HTML to plain text, preserving table row/cell boundaries.
+
+    Args:
+        raw_html: Raw HTML string.
+
+    Returns:
+        Plain text with block tags rendered as newlines and table cells
+        separated by spaces. HTML entities are decoded. If the input is
+        already plain text (no tags), it passes through with whitespace
+        normalized.
+    """
+    soup = BeautifulSoup(raw_html, "html.parser")
+
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    for comment in soup.find_all(string=lambda s: isinstance(s, Comment)):
+        comment.extract()
+
+    for tag in soup.find_all(True):
+        if tag.name in _CELL_TAGS:
+            tag.insert_before(" ")
+            tag.insert_after(" ")
+        elif tag.name in _BLOCK_TAGS:
+            tag.insert_before("\n")
+            tag.insert_after("\n")
+
+    text = _html.unescape(soup.get_text())
+
+    lines = [_INLINE_WS_RE.sub(" ", line).strip() for line in text.split("\n")]
+    collapsed = _MULTINEWLINE_RE.sub("\n\n", "\n".join(lines))
+    return collapsed.strip()
 
 
 def _normalize(s: str) -> str:
     """Decode HTML entities, normalize apostrophes and whitespace, and lowercase."""
     s = _html.unescape(s)
     s = s.replace("\u2019", "'").replace("\u2018", "'")
+    s = s.replace("\u201c", '"').replace("\u201d", '"')
     return " ".join(s.split()).lower()

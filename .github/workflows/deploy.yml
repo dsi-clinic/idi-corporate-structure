@@ -70,12 +70,7 @@ jobs:
 
       - name: Bump rc version (release branch)
         if: startsWith(github.ref, 'refs/heads/release')
-        run: |
-          if echo "${{ steps.get-version.outputs.current_version }}" | grep -q rc; then
-            uv version --bump rc
-          else
-            uv version "${GITHUB_REF#refs/heads/release/}rc1"
-          fi
+        run: uv version --bump rc
 
       - name: Bump stable version (main branch)
         if: github.ref == 'refs/heads/main'

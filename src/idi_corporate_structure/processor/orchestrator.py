@@ -32,12 +32,6 @@ def get_args() -> argparse.Namespace:
     )
     parser.add_argument("--rate-limit", type=float, default=0.2, help="Rate limit")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of workers")
-    parser.add_argument(
-        "--stale-threshold-days",
-        type=int,
-        default=30,
-        help="Reprocess filings whose date_added is older than this; <0 disables filtering",
-    )
     return parser.parse_args()
 
 
@@ -57,9 +51,6 @@ def main() -> None:
         rate_limit=args.rate_limit,
         num_workers=args.num_workers,
         openai_api_key=args.openai_api_key,
-        stale_threshold_days=(
-            args.stale_threshold_days if args.stale_threshold_days >= 0 else None
-        ),
     )
     sec_client = SecClient(rate_limit=config.rate_limit)
     extractor = GptExtractor(openai_api_key=config.openai_api_key)

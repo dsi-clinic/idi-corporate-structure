@@ -11,7 +11,6 @@ import re
 import threading
 import zipfile
 from abc import ABC, abstractmethod
-from typing import cast
 
 # Third party imports
 import pandas as pd
@@ -29,11 +28,11 @@ from idi_corporate_structure.processor.failures import (
     FailureType,
 )
 from idi_corporate_structure.processor.types import (
+    SUPPORTED_EXHIBIT_EXTENSIONS,
     Filing,
     PipelineConfig,
     PipelineStats,
     Subsidiary,
-    SUPPORTED_EXHIBIT_EXTENSIONS
 )
 
 
@@ -41,7 +40,10 @@ class Pipeline(ABC):
     """Baseline class for processing piplines."""
 
     def __init__(
-        self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor,
+        self,
+        config: PipelineConfig,
+        sec_client: SecClient,
+        extractor: GptExtractor,
     ) -> None:
         """Initialize the pipeline with config, SEC client, and extractor.
 
@@ -156,7 +158,6 @@ class SubsidiaryPipeline(Pipeline):
             flush_every=config.failure_flush_every,
         )
         self.rows = []
-        self._stale_filing_keys: set[tuple[str, str]] = set()
 
     def _retrieve_overflow_filings(
         self, data: dict, cik: str, zf: zipfile.ZipFile
@@ -322,7 +323,10 @@ class SubsidiaryPipeline(Pipeline):
         accession = accession_number.replace("-", "")
         directory = f"{self.sec_client.SEC_URL}/{company_data['cik']}/{accession}/index.json"
 
-        if primary_document != "" and primary_document.split(".")[-1].upper() in SUPPORTED_EXHIBIT_EXTENSIONS:
+        if (
+            primary_document != ""
+            and primary_document.split(".")[-1].upper() in SUPPORTED_EXHIBIT_EXTENSIONS
+        ):
             primary = (
                 f"{self.sec_client.SEC_URL}/{company_data['cik']}/{accession}/{primary_document}"
             )
@@ -388,62 +392,34 @@ class SubsidiaryPipeline(Pipeline):
         return filings
 
     def _filter_already_processed(self, filings: list[Filing]) -> list[Filing]:
-        """Drop filings already represented in the output parquet, unless stale.
+        """Drop filings already represented in the output parquet.
 
-        Reads the existing output parquet and partitions its ``(parent_cik,
-        accession_number)`` keys into fresh (within ``stale_threshold_days``) and
-        stale (older). Fresh filings are removed from the returned list; stale
-        filing keys are recorded on ``self._stale_filing_keys`` so that
-        `save_output` can drop their old rows before merging the new ones.
-
-        If ``stale_threshold_days`` is ``None`` or no parquet exists yet, returns
-        ``filings`` unchanged.
+        Reads the existing output parquet and removes any filing whose
+        ``(parent_cik, accession_number)`` key is already present. Returns
+        ``filings`` unchanged if no parquet exists yet.
 
         Args:
             filings: Filings returned by `load_input`.
 
         Returns:
-            Filings that still need to be processed (new + stale).
+            Filings that still need to be processed.
         """
-        if self.config.stale_threshold_days is None:
-            return filings
-
         try:
             existing_df = pd.read_parquet(self.config.output_file)
         except FileNotFoundError:
             return filings
 
-        if existing_df.empty or "date_added" not in existing_df.columns:
-            return filings
-
-        # Get the last date_added for each (parent_cik, accession_number) group
-        last_added = (
-            pd.to_datetime(existing_df["date_added"], utc=True, errors="coerce")
-            .groupby([existing_df["parent_cik"], existing_df["accession_number"]])
-            .max()
-        )
-        threshold = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=self.config.stale_threshold_days)
-
-        # Filter filings to only include those that have a date_added greater than or equal to the threshold
-        fresh_keys = {key for key, ts in last_added.items() if pd.notna(ts) and ts >= threshold}
-
-        # Filter filings to only include those that have a date_added less than the threshold
-        self._stale_filing_keys = {
-            cast(tuple[str, str], key) for key, ts in last_added.items() if pd.notna(ts) and ts < threshold
-        }
-
-        # Filter filings to only include those that are not in the fresh_keys set
+        existing_keys = set(zip(existing_df["parent_cik"], existing_df["accession_number"]))
         unprocessed = [
             f
             for f in filings
-            if (f.cik, f.accession_number) not in fresh_keys
+            if (f.cik, f.accession_number) not in existing_keys
             and (f.cik, f.filename) not in self.failure_registry
         ]
         self.logger.info(
-            "Filter: %d filings loaded, %d skipped as fresh, %d stale to reprocess, %d remaining",
+            "Filter: %d filings loaded, %d skipped as already processed, %d remaining",
             len(filings),
             len(filings) - len(unprocessed),
-            len(self._stale_filing_keys),
             len(unprocessed),
         )
         return unprocessed
@@ -814,39 +790,12 @@ class SubsidiaryPipeline(Pipeline):
 
         return subsidiaries
 
-    def _drop_stale_rows(self, existing_subsidiaries_df: pd.DataFrame) -> pd.DataFrame:
-        """Drop stale rows from the subsidiaries DataFrame.
-
-        Args:
-            existing_subsidiaries_df: DataFrame of existing subsidiaries
-
-        Returns:
-            DataFrame of subsidiaries with stale rows dropped
-        """
-        # Create a mask of stale rows
-        if self._stale_filing_keys and not existing_subsidiaries_df.empty:
-            stale_mask = pd.Series(
-                list(
-                    zip(
-                        existing_subsidiaries_df["parent_cik"],
-                        existing_subsidiaries_df["accession_number"],
-                    )
-                ),
-                index=existing_subsidiaries_df.index,
-            ).isin(self._stale_filing_keys)
-            # Drop rows for stale filings so re-extracted subsidiaries replace them
-            dropped = int(stale_mask.sum())
-            if dropped:
-                self.logger.info("Dropping %d stale rows before merge", dropped)
-                existing_subsidiaries_df = existing_subsidiaries_df.loc[~stale_mask]
-
-        return existing_subsidiaries_df
-
     def save_output(self, processed_list: list[Subsidiary]) -> None:
         """Deduplicate and persist extracted subsidiaries as a Parquet file.
 
-        Drops duplicate rows keyed on ``(parent_cik, accession_number, name)`` and
-        appends a UTC ``date_added`` timestamp column before writing.
+        Merges new rows with any existing parquet, drops duplicates keyed on
+        ``(parent_cik, accession_number, name)``, and stamps a UTC ``date_added``
+        column before writing.
 
         Args:
             processed_list: List of :class:`Subsidiary` objects returned by
@@ -859,9 +808,7 @@ class SubsidiaryPipeline(Pipeline):
         subsidiaries_df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
 
         try:
-            # Read existing subsidiaries from the output file and drop stale rows
             existing_subsidiaries_df = pd.read_parquet(self.config.output_file)
-            existing_subsidiaries_df = self._drop_stale_rows(existing_subsidiaries_df)
 
             # Merge the existing subsidiaries with the new subsidiaries
             self.logger.info(

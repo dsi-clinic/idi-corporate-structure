@@ -40,7 +40,6 @@ cpu = config.config.get("cpu") or "1024"
 memory = config.config.get("memory") or "4096"
 rate_limit = config.config.get("rate_limit") or "0.2"
 num_workers = config.config.get("num_workers") or "10"
-stale_threshold_days = config.config.get("stale_threshold_days") or "30"
 input_sample_size = config.config.get("input_sample_size") or "0"
 
 # Build S3 paths from externally managed bucket (name from config)
@@ -72,8 +71,6 @@ container_definitions = pulumi.Output.all(
                     rate_limit,
                     "--num-workers",
                     num_workers,
-                    "--stale-threshold-days",
-                    stale_threshold_days,
                 ],
                 "environment": [
                     {"name": "AWS_REGION", "value": args["region"]},

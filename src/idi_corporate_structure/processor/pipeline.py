@@ -409,6 +409,9 @@ class SubsidiaryPipeline(Pipeline):
         except FileNotFoundError:
             return filings
 
+        if "parent_cik" not in existing_df.columns or "accession_number" not in existing_df.columns:
+            return filings
+
         existing_keys = set(zip(existing_df["parent_cik"], existing_df["accession_number"]))
         unprocessed = [
             f

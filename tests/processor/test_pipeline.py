@@ -1008,6 +1008,14 @@ class TestFilterAlreadyProcessed:
 
         assert filing in result
 
+    def test_returns_all_when_parquet_has_no_expected_columns(self, pipeline):
+        pd.DataFrame().to_parquet(pipeline.config.output_file)
+        filing = self._make_filing()
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing in result
+
     def test_skips_already_processed_filing(self, pipeline):
         filing = self._make_filing()
         self._write_parquet(

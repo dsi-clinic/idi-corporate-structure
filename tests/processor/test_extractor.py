@@ -289,13 +289,8 @@ class TestGptExtractor:
 
         assert len(result) == 1
 
-<<<<<<< HEAD
     def test_quote_mismatch_does_not_drop_but_logs_warning(self, sample_filing, mocker):
         """A non-matching source_quote logs WARNING but does not drop the row."""
-=======
-    def test_quote_mismatch_does_not_drop_but_logs_debug(self, sample_filing, mocker):
-        """A non-matching source_quote logs DEBUG but does not drop the row."""
->>>>>>> 8a73ca2 (Extract HTML exhibit content prior to GPT extraction)
         extractor = GptExtractor(openai_api_key="fake-key")
         mocker.patch.object(
             extractor._openai_client,

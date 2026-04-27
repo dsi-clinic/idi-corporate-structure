@@ -185,10 +185,6 @@ jobs:
       ECS_TASK_MEMORY: ${{ secrets.ECS_TASK_MEMORY }}
       API_RATE_LIMIT: ${{ secrets.API_RATE_LIMIT }}
       NUM_WORKERS: ${{ secrets.NUM_WORKERS }}
-<<<<<<< HEAD
-      THRESHOLD_DAYS: ${{ secrets.THRESHOLD_DAYS }}
-=======
->>>>>>> 2b8d710 (Add foreign issuers to the subsidiaries list (#26))
       INPUT_SAMPLE_SIZE: ${{ secrets.INPUT_SAMPLE_SIZE }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       CRON: ${{ secrets.CRON }}

@@ -289,8 +289,8 @@ class TestGptExtractor:
 
         assert len(result) == 1
 
-    def test_quote_mismatch_does_not_drop_but_logs_debug(self, sample_filing, mocker):
-        """A non-matching source_quote logs DEBUG but does not drop the row."""
+    def test_quote_mismatch_does_not_drop_but_logs_warning(self, sample_filing, mocker):
+        """A non-matching source_quote logs WARNING but does not drop the row."""
         extractor = GptExtractor(openai_api_key="fake-key")
         mocker.patch.object(
             extractor._openai_client,
@@ -305,12 +305,12 @@ class TestGptExtractor:
                 ]
             ),
         )
-        debug_spy = mocker.spy(extractor._logger, "debug")
+        warning_spy = mocker.spy(extractor._logger, "warning")
         result, *_ = extractor.extract(sample_filing, make_exhibit_response())
 
         assert len(result) == 1
         assert any(
-            "Quote not in document" in str(call.args[0]) for call in debug_spy.call_args_list
+            "Quote not in document" in str(call.args[0]) for call in warning_spy.call_args_list
         )
 
     def test_location_not_near_name_logs_debug(self, sample_filing, mocker):

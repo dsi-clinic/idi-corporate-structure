@@ -11,6 +11,7 @@ import re
 import threading
 import zipfile
 from abc import ABC, abstractmethod
+from typing import cast
 
 # Third party imports
 import pandas as pd
@@ -32,6 +33,7 @@ from idi_corporate_structure.processor.types import (
     PipelineConfig,
     PipelineStats,
     Subsidiary,
+    SUPPORTED_EXHIBIT_EXTENSIONS
 )
 
 
@@ -39,7 +41,7 @@ class Pipeline(ABC):
     """Baseline class for processing piplines."""
 
     def __init__(
-        self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
+        self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor,
     ) -> None:
         """Initialize the pipeline with config, SEC client, and extractor.
 
@@ -54,6 +56,7 @@ class Pipeline(ABC):
         self.extractor = extractor
         self.sec_client = sec_client
         self.stats = PipelineStats()
+        self.logger = get_logger(type(self).__name__)
 
     @abstractmethod
     def load_input(self) -> list:
@@ -134,7 +137,6 @@ class SubsidiaryPipeline(Pipeline):
     IS_OVERFLOW = re.compile(r"-submissions-\d+\.json$")
 
     _INPUT_SAMPLE_SIZE = int(os.environ.get("INPUT_SAMPLE_SIZE", 0))
-    _SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
     def __init__(
         self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
@@ -148,7 +150,6 @@ class SubsidiaryPipeline(Pipeline):
             extractor: Extractor used to parse subsidiary data from exhibit documents.
         """
         super().__init__(config, sec_client, extractor)
-        self.logger = get_logger("SubsidiaryPipeline")
         self.failure_registry = FailureRegistry(
             config.failure_file,
             classifier=CorporateStructureFailureClassifier(),
@@ -321,7 +322,7 @@ class SubsidiaryPipeline(Pipeline):
         accession = accession_number.replace("-", "")
         directory = f"{self.sec_client.SEC_URL}/{company_data['cik']}/{accession}/index.json"
 
-        if primary_document != "" and primary_document.split(".")[-1].upper() in ("HTM", "HTML"):
+        if primary_document != "" and primary_document.split(".")[-1].upper() in SUPPORTED_EXHIBIT_EXTENSIONS:
             primary = (
                 f"{self.sec_client.SEC_URL}/{company_data['cik']}/{accession}/{primary_document}"
             )
@@ -386,33 +387,6 @@ class SubsidiaryPipeline(Pipeline):
 
         return filings
 
-    def load_input(self) -> list[Filing]:
-        """Load input data from the SEC and return a list of filings.
-
-        Returns:
-            A list of Filing objects
-        """
-        filings = []
-        with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
-            namelist = zf.namelist()
-            if self._INPUT_SAMPLE_SIZE:
-                namelist = namelist[: self._INPUT_SAMPLE_SIZE]
-            self.logger.info("Total # of files to process: %d", len(namelist))
-
-            for filename in tqdm(namelist, desc="Retrieving filings"):
-                filings_for_file = self._parse_file(zf, filename)
-                if filings_for_file:
-                    filings.extend(filings_for_file)
-
-        self.logger.info(
-            "Located %d filings for %d files",
-            len(filings),
-            len(namelist) - self.stats.skipped_filings,
-        )
-        self.logger.info("Skipped %d files", self.stats.skipped_filings)
-
-        return self._filter_already_processed(filings)
-
     def _filter_already_processed(self, filings: list[Filing]) -> list[Filing]:
         """Drop filings already represented in the output parquet, unless stale.
 
@@ -455,7 +429,7 @@ class SubsidiaryPipeline(Pipeline):
 
         # Filter filings to only include those that have a date_added less than the threshold
         self._stale_filing_keys = {
-            key for key, ts in last_added.items() if pd.notna(ts) and ts < threshold
+            cast(tuple[str, str], key) for key, ts in last_added.items() if pd.notna(ts) and ts < threshold
         }
 
         # Filter filings to only include those that are not in the fresh_keys set
@@ -473,6 +447,33 @@ class SubsidiaryPipeline(Pipeline):
             len(unprocessed),
         )
         return unprocessed
+
+    def load_input(self) -> list[Filing]:
+        """Load input data from the SEC and return a list of filings.
+
+        Returns:
+            A list of Filing objects
+        """
+        filings = []
+        with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
+            namelist = zf.namelist()
+            if self._INPUT_SAMPLE_SIZE:
+                namelist = namelist[: self._INPUT_SAMPLE_SIZE]
+            self.logger.info("Total # of files to process: %d", len(namelist))
+
+            for filename in tqdm(namelist, desc="Retrieving filings"):
+                filings_for_file = self._parse_file(zf, filename)
+                if filings_for_file:
+                    filings.extend(filings_for_file)
+
+        self.logger.info(
+            "Located %d filings for %d files",
+            len(filings),
+            len(namelist) - self.stats.skipped_filings,
+        )
+        self.logger.info("Skipped %d files", self.stats.skipped_filings)
+
+        return self._filter_already_processed(filings)
 
     def _extract_worker(self, work_queue: queue.Queue, results_queue: queue.Queue) -> None:
         """Worker thread that extracts subsidiaries from queued exhibit documents.
@@ -713,7 +714,7 @@ class SubsidiaryPipeline(Pipeline):
             return {}
 
         ext = item["name"].rsplit(".", 1)[-1].upper() if "." in item["name"] else ""
-        if ext not in self._SUPPORTED_EXHIBIT_EXTENSIONS:
+        if ext not in SUPPORTED_EXHIBIT_EXTENSIONS:
             self.logger.warning("Unsupported exhibit extension: %s", ext)
             return {}
 

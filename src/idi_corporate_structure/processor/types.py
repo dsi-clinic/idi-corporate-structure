@@ -7,6 +7,7 @@ import threading
 from dataclasses import dataclass
 
 _REMOTE_SCHEMES = ("s3://", "https://", "http://", "gs://")
+SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
 
 def _is_local(path: str) -> bool:

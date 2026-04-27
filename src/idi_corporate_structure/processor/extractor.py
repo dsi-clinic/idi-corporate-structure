@@ -233,7 +233,7 @@ class GptExtractor(Extractor):
 
             quote = sub.get("source_quote", "")
             if quote and _normalize(quote) not in doc_text_normalized:
-                self._logger.debug("Quote not in document for %r @ %s", name, doc_url)
+                self._logger.warning("Quote not in document for %r @ %s", name, doc_url)
 
             ungrounded_location += self._is_location_grounded(
                 name, sub.get("location") or "", doc_text_normalized, doc_url
@@ -247,7 +247,7 @@ class GptExtractor(Extractor):
 
         return grounded_subsidiaries, ungrounded_name, ungrounded_location
 
-    def extract(self, filing: Filing, document: dict) -> list[Subsidiary]:
+    def extract(self, filing: Filing, document: dict) -> tuple[list[Subsidiary], int, int]:
         """Extract subsidiaries from an exhibit document using GPT.
 
         Sends the document text to the OpenAI API and maps each item in the

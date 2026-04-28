@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from idi_corporate_structure.processor.extractor import GptExtractor
+from idi_corporate_structure.processor.extractor import ExtractionTimeoutError, GptExtractor
 from idi_corporate_structure.processor.types import Subsidiary
 from tests.conftest import make_exhibit_response
 
@@ -136,10 +136,21 @@ class TestGptExtractor:
         mocker.patch.object(
             extractor._openai_client,
             "query_endpoint",
-            return_value={"error": "connection timeout"},
+            return_value={"error": "connection refused"},
         )
 
         with pytest.raises(RuntimeError):
+            extractor.extract(sample_filing, make_exhibit_response())
+
+    def test_raises_extraction_timeout_error_on_timeout(self, sample_filing, mocker):
+        extractor = GptExtractor(openai_api_key="fake-key")
+        mocker.patch.object(
+            extractor._openai_client,
+            "query_endpoint",
+            return_value={"error": "Timeout querying https://api.openai.com/...", "timeout": True},
+        )
+
+        with pytest.raises(ExtractionTimeoutError):
             extractor.extract(sample_filing, make_exhibit_response())
 
     # ── Grounding tests ───────────────────────────────────────────────────────
@@ -289,8 +300,8 @@ class TestGptExtractor:
 
         assert len(result) == 1
 
-    def test_quote_mismatch_does_not_drop_but_logs_warning(self, sample_filing, mocker):
-        """A non-matching source_quote logs WARNING but does not drop the row."""
+    def test_quote_mismatch_does_not_drop_but_logs_debug(self, sample_filing, mocker):
+        """A non-matching source_quote logs DEBUG but does not drop the row."""
         extractor = GptExtractor(openai_api_key="fake-key")
         mocker.patch.object(
             extractor._openai_client,
@@ -305,12 +316,12 @@ class TestGptExtractor:
                 ]
             ),
         )
-        warning_spy = mocker.spy(extractor._logger, "warning")
+        debug_spy = mocker.spy(extractor._logger, "debug")
         result, *_ = extractor.extract(sample_filing, make_exhibit_response())
 
         assert len(result) == 1
         assert any(
-            "Quote not in document" in str(call.args[0]) for call in warning_spy.call_args_list
+            "Quote not in document" in str(call.args[0]) for call in debug_spy.call_args_list
         )
 
     def test_location_not_near_name_logs_debug(self, sample_filing, mocker):

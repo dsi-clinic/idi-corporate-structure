@@ -32,6 +32,7 @@ from collections.abc import Callable
 import pandas as pd
 import requests
 
+from idi_corporate_structure.common.api import SecClient
 from idi_corporate_structure.processor.extractor import _html_to_text, _normalize
 
 _DEFAULT_SAMPLE_SIZE = 30
@@ -54,6 +55,9 @@ _FAIL = "[FAIL]"
 _WARN = "[WARN]"
 _INFO = "[INFO]"
 
+_DEFAULT_RATE_LIMIT = 0.2
+_DEFAULT_MAX_RETRIES = 3
+
 log = logging.getLogger(__name__)
 
 
@@ -64,7 +68,7 @@ class VerifyContext:
     df: pd.DataFrame
     failures_path: str
     sample_size: int
-    sec_headers: dict[str, str]
+    sec_client: SecClient
 
 
 @dataclasses.dataclass(frozen=True)
@@ -154,15 +158,21 @@ class _GroundingCounts:
     passed_locations: int = 0
 
 
-def _fetch_exhibit_text(url: str, headers: dict[str, str]) -> str:
-    """Fetch an exhibit URL and return its plain text.
+def _fetch_exhibit_text(url: str, sec_client: SecClient) -> str:
+    """Fetch an exhibit URL through ``SecClient`` and return its plain text.
+
+    Spacing between requests is enforced via ``sec_client.rate_limit()`` and
+    transient ``429``/``5xx`` responses are retried with exponential backoff
+    (``Retry-After`` honored) by the underlying ``urllib3.Retry`` adapter.
 
     Raises:
-        requests.RequestException: on any HTTP or network error.
+        RuntimeError: when the client returns an ``error`` (network or HTTP).
     """
-    resp = requests.get(url, headers=headers, timeout=15)
-    resp.raise_for_status()
-    return _html_to_text(resp.text)
+    sec_client.rate_limit()
+    result = sec_client.query_endpoint(url, return_json=False)
+    if "error" in result:
+        raise RuntimeError(result["error"])
+    return _html_to_text(result["data"])
 
 
 def _name_in_plain(name_norm: str, plain_norm: str) -> bool:
@@ -286,9 +296,9 @@ def check_grounding(ctx: VerifyContext) -> list[str]:
 
     for url in urls:
         try:
-            plain_norm = _normalize(_fetch_exhibit_text(url, ctx.sec_headers))
+            plain_norm = _normalize(_fetch_exhibit_text(url, ctx.sec_client))
             _check_exhibit_rows(groups.get_group(url), plain_norm, url, counts)
-        except requests.RequestException as exc:
+        except (RuntimeError, requests.RequestException) as exc:
             fetch_errors.append((str(url), str(exc)))
 
     if fetch_errors:
@@ -527,6 +537,25 @@ def create_args() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--rate-limit",
+        type=float,
+        default=_DEFAULT_RATE_LIMIT,
+        metavar="SECONDS",
+        help=(
+            f"Minimum seconds between SEC requests (default: {_DEFAULT_RATE_LIMIT}). "
+            "Increase if SEC EDGAR throttles a full-corpus run."
+        ),
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=_DEFAULT_MAX_RETRIES,
+        help=(
+            f"Max retries for transient 429/5xx responses (default: {_DEFAULT_MAX_RETRIES}). "
+            "Backoff is exponential and Retry-After is honored."
+        ),
+    )
+    parser.add_argument(
         "--checks",
         nargs="+",
         choices=_CHECK_NAMES,
@@ -571,12 +600,17 @@ def main() -> None:
         "%s %d rows across %d unique parent CIKs", _INFO, len(subs), subs["parent_cik"].nunique()
     )
 
+    # Build a SEC client with retry/backoff and a per-instance User-Agent
+    sec_client = SecClient(rate_limit=args.rate_limit)
+    sec_client.max_retries = args.max_retries
+    sec_client.SEC_HEADERS = {"User-Agent": args.user_agent}
+
     # Create an object to hold the context for the checks
     ctx = VerifyContext(
         df=subs,
         failures_path=args.failures,
         sample_size=args.sample_size,
-        sec_headers={"User-Agent": args.user_agent},
+        sec_client=sec_client,
     )
 
     # Run selected checks

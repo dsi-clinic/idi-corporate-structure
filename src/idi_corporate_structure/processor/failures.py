@@ -26,6 +26,7 @@ class FailureType(StrEnum):
     NO_EXHIBIT_FOUND = "no_exhibit_found"  # No exhibit file found in filing directory
     DOCUMENT_ERROR = "document_error"  # Document is too long to process
     EXTRACTION_FAILED = "extraction_failed"  # GPT returned no structured data
+    TIMEOUT_ERROR = "timeout_error"  # OpenAI API timed out
     API_ERROR = "api_error"  # HTTP failure fetching filing document
     RATE_LIMIT = "rate_limit"  # SEC rate limit (429)
     NO_SUBSIDIARIES = "no_subsidiaries"  # No subsidiaries found for filing

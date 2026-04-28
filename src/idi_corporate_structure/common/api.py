@@ -160,6 +160,7 @@ class ApiClient(ABC):
             On error, ``error`` is added and ``data`` may be absent.
         """
         response, error, error_exc = None, None, None
+        response_data: dict = {}
         try:
             response = (
                 self.get(url=url, params=params, headers=headers)
@@ -167,12 +168,17 @@ class ApiClient(ABC):
                 else self.post(url=url, data=data, headers=headers)
             )
 
+        except requests.exceptions.Timeout as e:
+            error = f"Timeout querying {url}: {e}"
+            error_exc = e
+            self.logger.error(error)
+            response_data["timeout"] = True
+
         except requests.exceptions.RequestException as e:
             error = f"Error querying {url}: {e}"
             error_exc = e
             self.logger.error(error)
 
-        response_data = {}
         if isinstance(error_exc, requests.exceptions.HTTPError) and error_exc.response is not None:
             response_data["status_code"] = error_exc.response.status_code
 
@@ -374,6 +380,7 @@ class OpenAiClient(ApiClient):
     """API client for the OpenAI API."""
 
     OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+    REQUEST_TIMEOUT: tuple[int, int] = (10, 90)
 
     def __init__(self, api_key: str, rate_limit: float = 0.5) -> None:
         """Initializes the OpenAI API.

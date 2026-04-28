@@ -22,7 +22,12 @@ from idi_corporate_structure.common.api import SecClient
 from idi_corporate_structure.common.failures import FailureRegistry
 from idi_corporate_structure.common.logs import get_logger
 from idi_corporate_structure.common.storage import open_zip
-from idi_corporate_structure.processor.extractor import DocumentError, GptExtractor, _html_to_text
+from idi_corporate_structure.processor.extractor import (
+    DocumentError,
+    ExtractionTimeoutError,
+    GptExtractor,
+    _html_to_text,
+)
 from idi_corporate_structure.processor.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
@@ -509,6 +514,17 @@ class SubsidiaryPipeline(Pipeline):
                 self.stats.increment("failed_subsidiaries")
                 self.failure_registry.add((filing.cik, filing.filename), FailureType.DOCUMENT_ERROR)
 
+            except ExtractionTimeoutError:
+                self.logger.error(
+                    "Timeout extracting subsidiaries from filing: %s - %s - %s",
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
+                )
+                self.stats.increment("failed_subsidiaries")
+                self.stats.increment("timeout_subsidiaries")
+                self.failure_registry.add((filing.cik, filing.filename), FailureType.TIMEOUT_ERROR)
+
             except Exception as _:
                 self.logger.error(
                     "Error extracting subsidiaries from filing: %s - %s - %s",
@@ -864,6 +880,7 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("  Subsidiaries")
         self.logger.info("    Total:    %d", self.stats.total_subsidiaries)
         self.logger.info("    Failed:   %d", self.stats.failed_subsidiaries)
+        self.logger.info("    Timeouts: %d", self.stats.timeout_subsidiaries)
         self.logger.info("    Zero:     %d", self.stats.zero_subsidiaries)
         self.logger.info("    Ungrounded name:     %d", self.stats.ungrounded_name)
         self.logger.info("    Ungrounded location: %d", self.stats.ungrounded_location)

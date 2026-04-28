@@ -46,6 +46,12 @@ class DocumentError(Exception):
     pass
 
 
+class ExtractionTimeoutError(RuntimeError):
+    """Exception raised when the OpenAI API times out during extraction."""
+
+    pass
+
+
 class Extractor(ABC):
     """Interface for extracting subsidiaries from a single exhibit document."""
 
@@ -152,6 +158,8 @@ class GptExtractor(Extractor):
         if "error" in response:
             if response.get("status_code") == self._DOCUMENT_ERROR_STATUS_CODE:
                 raise DocumentError(response["error"])
+            if response.get("timeout"):
+                raise ExtractionTimeoutError(response["error"])
             raise RuntimeError(response["error"])
 
         content = response["data"]["choices"][0]["message"]["content"]
@@ -233,7 +241,7 @@ class GptExtractor(Extractor):
 
             quote = sub.get("source_quote", "")
             if quote and _normalize(quote) not in doc_text_normalized:
-                self._logger.warning("Quote not in document for %r @ %s", name, doc_url)
+                self._logger.debug("Quote not in document for %r @ %s", name, doc_url)
 
             ungrounded_location += self._is_location_grounded(
                 name, sub.get("location") or "", doc_text_normalized, doc_url

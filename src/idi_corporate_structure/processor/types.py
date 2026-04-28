@@ -81,6 +81,7 @@ class PipelineStats:
     skipped_filings: int = 0
     total_subsidiaries: int = 0
     failed_subsidiaries: int = 0
+    timeout_subsidiaries: int = 0
     zero_subsidiaries: int = 0
     ungrounded_name: int = 0
     ungrounded_location: int = 0

@@ -203,10 +203,11 @@ class SubsidiaryPipeline(Pipeline):
                 filing_dates += overflow.get("filingDate", [])
 
             except KeyError:
-                self.logger.error("Overflow file not found: %s", overflow_filename)
-                self.stats.increment("failed_filings")
-                self.failure_registry.add(
-                    (cik, overflow_filename), failure_type=FailureType.NO_OVERFLOW_FILINGS
+                self._record_failure(
+                    (cik, overflow_filename),
+                    FailureType.NO_OVERFLOW_FILINGS, "error",
+                    "Overflow file not found: %s", overflow_filename,
+                    stat_keys=("failed_filings",),
                 )
 
         return forms, accession_numbers, primary_documents, filing_dates
@@ -251,15 +252,21 @@ class SubsidiaryPipeline(Pipeline):
             len({len(forms), len(accession_numbers), len(primary_documents), len(filing_dates)})
             != 1
         ):
-            self.logger.error("Filename: %s has forms with mismatched data lengths.", filename)
-            self.stats.increment("failed_filings")
-            self.failure_registry.add((cik, filename), failure_type=FailureType.MISMATCHED_LENGTHS)
+            self._record_failure(
+                (cik, filename),
+                FailureType.MISMATCHED_LENGTHS, "error",
+                "Filename: %s has forms with mismatched data lengths.", filename,
+                stat_keys=("failed_filings",),
+            )
             return None
 
         if not any([forms, accession_numbers, primary_documents, filing_dates]):
-            self.logger.debug("Filename: %s has forms without data.", filename)
-            self.stats.increment("failed_filings")
-            self.failure_registry.add((cik, filename), failure_type=FailureType.NO_FORM_DATA)
+            self._record_failure(
+                (cik, filename),
+                FailureType.NO_FORM_DATA, "debug",
+                "Filename: %s has forms without data.", filename,
+                stat_keys=("failed_filings",),
+            )
             return None
 
         return zip(forms, accession_numbers, primary_documents, filing_dates)
@@ -459,6 +466,30 @@ class SubsidiaryPipeline(Pipeline):
 
         return self._filter_already_processed(filings)
 
+    def _record_failure(
+        self,
+        key: tuple[str, str],
+        failure_type: FailureType,
+        log_level: str,
+        message: str,
+        *log_args: object,
+        stat_keys: tuple[str, ...] = ("failed_subsidiaries",),
+    ) -> None:
+        """Log a failure, increment stats, and register it in the failure registry.
+
+        Args:
+            key: Registry key tuple, typically ``(cik, filename)``.
+            failure_type: Classified failure type.
+            log_level: Logger method name (``"warning"`` or ``"error"``).
+            message: ``%s``-style log message.
+            *log_args: Arguments to substitute into ``message``.
+            stat_keys: Stat field names to increment (default: ``("failed_subsidiaries",)``).
+        """
+        getattr(self.logger, log_level)(message, *log_args)
+        for key_ in stat_keys:
+            self.stats.increment(key_)
+        self.failure_registry.add(key, failure_type)
+
     def _extract_worker(self, work_queue: queue.Queue, results_queue: queue.Queue) -> None:
         """Worker thread that extracts subsidiaries from queued exhibit documents.
 
@@ -490,51 +521,39 @@ class SubsidiaryPipeline(Pipeline):
                     self.stats.increment("ungrounded_location", ungrounded_location)
 
                 if len(subsidiaries) == 0:
-                    self.logger.warning(
+                    self._record_failure(
+                        (filing.cik, filing.filename),
+                        FailureType.NO_SUBSIDIARIES, "warning",
                         "No subsidiaries found for filing: %s - %s - %s",
-                        filing.cik,
-                        filing.accession_number,
-                        filing.filing_date,
-                    )
-                    self.stats.increment("zero_subsidiaries")
-                    self.failure_registry.add(
-                        (filing.cik, filing.filename), FailureType.NO_SUBSIDIARIES
+                        filing.cik, filing.accession_number, filing.filing_date,
+                        stat_keys=("zero_subsidiaries",),
                     )
 
                 results_queue.put(subsidiaries)
 
             except DocumentError as e:
-                self.logger.error(
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.DOCUMENT_ERROR, "error",
                     "Document error for filing: %s - %s - %s: %s",
-                    filing.cik,
-                    filing.accession_number,
-                    filing.filing_date,
-                    e,
+                    filing.cik, filing.accession_number, filing.filing_date, e,
                 )
-                self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add((filing.cik, filing.filename), FailureType.DOCUMENT_ERROR)
 
             except ExtractionTimeoutError:
-                self.logger.error(
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.TIMEOUT_ERROR, "error",
                     "Timeout extracting subsidiaries from filing: %s - %s - %s",
-                    filing.cik,
-                    filing.accession_number,
-                    filing.filing_date,
+                    filing.cik, filing.accession_number, filing.filing_date,
+                    stat_keys=("failed_subsidiaries", "timeout_subsidiaries"),
                 )
-                self.stats.increment("failed_subsidiaries")
-                self.stats.increment("timeout_subsidiaries")
-                self.failure_registry.add((filing.cik, filing.filename), FailureType.TIMEOUT_ERROR)
 
-            except Exception as _:
-                self.logger.error(
+            except Exception:
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.EXTRACTION_FAILED, "error",
                     "Error extracting subsidiaries from filing: %s - %s - %s",
-                    filing.cik,
-                    filing.accession_number,
-                    filing.filing_date,
-                )
-                self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(
-                    (filing.cik, filing.filename), FailureType.EXTRACTION_FAILED
+                    filing.cik, filing.accession_number, filing.filing_date,
                 )
 
             finally:
@@ -584,15 +603,11 @@ class SubsidiaryPipeline(Pipeline):
         """
         directory_response = self.sec_client.query_endpoint(filing.directory)
         if "directory" not in directory_response.get("data", {}).keys():
-            self.logger.error(
+            self._record_failure(
+                (filing.cik, filing.filename),
+                FailureType.NO_FILING_DIRECTORY, "error",
                 "Filing: %s - %s - %s does not have a directory listing.",
-                filing.cik,
-                filing.accession_number,
-                filing.filing_date,
-            )
-            self.stats.increment("failed_subsidiaries")
-            self.failure_registry.add(
-                (filing.cik, filing.filename), FailureType.NO_FILING_DIRECTORY
+                filing.cik, filing.accession_number, filing.filing_date,
             )
             return []
         self.sec_client.rate_limit()
@@ -618,10 +633,10 @@ class SubsidiaryPipeline(Pipeline):
                     text = "\n\n".join(page.extract_text() or "" for page in pdf.pages)
                 exhibit_content = {"url": sec_url, "data": text}
             except Exception:
-                self.logger.error("Failed to extract PDF content: %s", sec_url)
-                self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(
-                    (filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.NO_EXHIBIT_CONTENT, "error",
+                    "Failed to extract PDF content: %s", sec_url,
                 )
         return exhibit_content
 
@@ -645,14 +660,12 @@ class SubsidiaryPipeline(Pipeline):
             exhibit_content = {"url": sec_url, "data": _html_to_text(item_response["data"])}
         else:
             exhibit_content = {}
-            self.logger.error(
+            self._record_failure(
+                (filing.cik, filing.filename),
+                FailureType.NO_EXHIBIT_CONTENT, "error",
                 "Exhibit %s - %s - %s does not have content.",
-                name,
-                filing.cik,
-                filing.accession_number,
+                name, filing.cik, filing.accession_number,
             )
-            self.stats.increment("failed_subsidiaries")
-            self.failure_registry.add((filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT)
         return exhibit_content
 
     def _fetch_other_content(self, name: str, filing: Filing, sec_url: str) -> dict:
@@ -671,14 +684,12 @@ class SubsidiaryPipeline(Pipeline):
             exhibit_content = {"url": sec_url, "data": item_response["data"]}
         else:
             exhibit_content = {}
-            self.logger.error(
+            self._record_failure(
+                (filing.cik, filing.filename),
+                FailureType.NO_EXHIBIT_CONTENT, "error",
                 "Exhibit %s - %s - %s does not have content.",
-                name,
-                filing.cik,
-                filing.accession_number,
+                name, filing.cik, filing.accession_number,
             )
-            self.stats.increment("failed_subsidiaries")
-            self.failure_registry.add((filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT)
         return exhibit_content
 
     def _fetch_exhibit_content(self, filing: Filing, item: dict) -> dict:

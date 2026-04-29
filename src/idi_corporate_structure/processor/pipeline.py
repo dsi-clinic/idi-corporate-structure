@@ -205,8 +205,10 @@ class SubsidiaryPipeline(Pipeline):
             except KeyError:
                 self._record_failure(
                     (cik, overflow_filename),
-                    FailureType.NO_OVERFLOW_FILINGS, "error",
-                    "Overflow file not found: %s", overflow_filename,
+                    FailureType.NO_OVERFLOW_FILINGS,
+                    "error",
+                    "Overflow file not found: %s",
+                    overflow_filename,
                     stat_keys=("failed_filings",),
                 )
 
@@ -254,8 +256,10 @@ class SubsidiaryPipeline(Pipeline):
         ):
             self._record_failure(
                 (cik, filename),
-                FailureType.MISMATCHED_LENGTHS, "error",
-                "Filename: %s has forms with mismatched data lengths.", filename,
+                FailureType.MISMATCHED_LENGTHS,
+                "error",
+                "Filename: %s has forms with mismatched data lengths.",
+                filename,
                 stat_keys=("failed_filings",),
             )
             return None
@@ -263,8 +267,10 @@ class SubsidiaryPipeline(Pipeline):
         if not any([forms, accession_numbers, primary_documents, filing_dates]):
             self._record_failure(
                 (cik, filename),
-                FailureType.NO_FORM_DATA, "debug",
-                "Filename: %s has forms without data.", filename,
+                FailureType.NO_FORM_DATA,
+                "debug",
+                "Filename: %s has forms without data.",
+                filename,
                 stat_keys=("failed_filings",),
             )
             return None
@@ -523,9 +529,12 @@ class SubsidiaryPipeline(Pipeline):
                 if len(subsidiaries) == 0:
                     self._record_failure(
                         (filing.cik, filing.filename),
-                        FailureType.NO_SUBSIDIARIES, "warning",
+                        FailureType.NO_SUBSIDIARIES,
+                        "warning",
                         "No subsidiaries found for filing: %s - %s - %s",
-                        filing.cik, filing.accession_number, filing.filing_date,
+                        filing.cik,
+                        filing.accession_number,
+                        filing.filing_date,
                         stat_keys=("zero_subsidiaries",),
                     )
 
@@ -534,26 +543,36 @@ class SubsidiaryPipeline(Pipeline):
             except DocumentError as e:
                 self._record_failure(
                     (filing.cik, filing.filename),
-                    FailureType.DOCUMENT_ERROR, "error",
+                    FailureType.DOCUMENT_ERROR,
+                    "error",
                     "Document error for filing: %s - %s - %s: %s",
-                    filing.cik, filing.accession_number, filing.filing_date, e,
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
+                    e,
                 )
 
             except ExtractionTimeoutError:
                 self._record_failure(
                     (filing.cik, filing.filename),
-                    FailureType.TIMEOUT_ERROR, "error",
+                    FailureType.TIMEOUT_ERROR,
+                    "error",
                     "Timeout extracting subsidiaries from filing: %s - %s - %s",
-                    filing.cik, filing.accession_number, filing.filing_date,
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
                     stat_keys=("failed_subsidiaries", "timeout_subsidiaries"),
                 )
 
             except Exception:
                 self._record_failure(
                     (filing.cik, filing.filename),
-                    FailureType.EXTRACTION_FAILED, "error",
+                    FailureType.EXTRACTION_FAILED,
+                    "error",
                     "Error extracting subsidiaries from filing: %s - %s - %s",
-                    filing.cik, filing.accession_number, filing.filing_date,
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
                 )
 
             finally:
@@ -605,12 +624,14 @@ class SubsidiaryPipeline(Pipeline):
         if "directory" not in directory_response.get("data", {}).keys():
             self._record_failure(
                 (filing.cik, filing.filename),
-                FailureType.NO_FILING_DIRECTORY, "error",
+                FailureType.NO_FILING_DIRECTORY,
+                "error",
                 "Filing: %s - %s - %s does not have a directory listing.",
-                filing.cik, filing.accession_number, filing.filing_date,
+                filing.cik,
+                filing.accession_number,
+                filing.filing_date,
             )
             return []
-        self.sec_client.rate_limit()
         return directory_response.get("data", {}).get("directory", {}).get("item", [])
 
     def _fetch_pdf_content(self, filing: Filing, item: dict, sec_url: str) -> dict:
@@ -635,8 +656,10 @@ class SubsidiaryPipeline(Pipeline):
             except Exception:
                 self._record_failure(
                     (filing.cik, filing.filename),
-                    FailureType.NO_EXHIBIT_CONTENT, "error",
-                    "Failed to extract PDF content: %s", sec_url,
+                    FailureType.NO_EXHIBIT_CONTENT,
+                    "error",
+                    "Failed to extract PDF content: %s",
+                    sec_url,
                 )
         return exhibit_content
 
@@ -662,9 +685,12 @@ class SubsidiaryPipeline(Pipeline):
             exhibit_content = {}
             self._record_failure(
                 (filing.cik, filing.filename),
-                FailureType.NO_EXHIBIT_CONTENT, "error",
+                FailureType.NO_EXHIBIT_CONTENT,
+                "error",
                 "Exhibit %s - %s - %s does not have content.",
-                name, filing.cik, filing.accession_number,
+                name,
+                filing.cik,
+                filing.accession_number,
             )
         return exhibit_content
 
@@ -686,9 +712,12 @@ class SubsidiaryPipeline(Pipeline):
             exhibit_content = {}
             self._record_failure(
                 (filing.cik, filing.filename),
-                FailureType.NO_EXHIBIT_CONTENT, "error",
+                FailureType.NO_EXHIBIT_CONTENT,
+                "error",
                 "Exhibit %s - %s - %s does not have content.",
-                name, filing.cik, filing.accession_number,
+                name,
+                filing.cik,
+                filing.accession_number,
             )
         return exhibit_content
 
@@ -733,7 +762,6 @@ class SubsidiaryPipeline(Pipeline):
         else:
             exhibit_content = self._fetch_other_content(name, filing, sec_url)
 
-        self.sec_client.rate_limit()
         return exhibit_content
 
     def _fetch_exhibit(self, filing: Filing) -> list[dict]:

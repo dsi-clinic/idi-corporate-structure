@@ -162,6 +162,7 @@ class ApiClient(ABC):
         response, error, error_exc = None, None, None
         response_data: dict = {}
         try:
+            self.rate_limit()
             response = (
                 self.get(url=url, params=params, headers=headers)
                 if method == "get"

@@ -346,13 +346,6 @@ class TestFetchDirectory:
 
         assert pipeline.stats.failed_subsidiaries == 1
 
-    def test_calls_rate_limit_after_success(self, pipeline, sample_filing):
-        pipeline.sec_client.query_endpoint.return_value = make_directory_response([])
-
-        pipeline._fetch_directory(sample_filing)
-
-        pipeline.sec_client.rate_limit.assert_called_once()
-
     def test_returns_empty_list_for_empty_directory(self, pipeline, sample_filing):
         pipeline.sec_client.query_endpoint.return_value = make_directory_response([])
 
@@ -413,21 +406,13 @@ class TestFetchExhibitContent:
         assert result == {}
         assert pipeline.stats.failed_subsidiaries == 1
 
-    def test_calls_rate_limit_after_exhibit_fetch(self, pipeline, sample_filing):
-        item = {"name": "d12345ex21.htm", "type": "text.gif"}
-        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
-
-        pipeline._fetch_exhibit_content(sample_filing, item)
-
-        pipeline.sec_client.rate_limit.assert_called_once()
-
-    def test_does_not_call_rate_limit_for_skipped_item(self, pipeline, sample_filing):
+    def test_does_not_fetch_for_skipped_item(self, pipeline, sample_filing):
         # "primarydoc.htm" contains neither EX (preceded by \w) nor SUB
         item = {"name": "primarydoc.htm", "type": "text.gif"}
 
         pipeline._fetch_exhibit_content(sample_filing, item)
 
-        pipeline.sec_client.rate_limit.assert_not_called()
+        pipeline.sec_client.query_endpoint.assert_not_called()
 
     def test_builds_correct_url(self, pipeline, sample_filing):
         item = {"name": "d12345ex21.htm", "type": "text.gif"}

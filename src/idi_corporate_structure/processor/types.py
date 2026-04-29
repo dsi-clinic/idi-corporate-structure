@@ -43,7 +43,7 @@ class Filing:
 
     @property
     def exhibit_type(self) -> str:
-        """Retrun the exhibit number for the filing's subsidiary list.
+        """Return the exhibit number for the filing's subsidiary list.
 
         10-K filers use Exhibit 21; 20-F filers use Exhibit 8.
         """

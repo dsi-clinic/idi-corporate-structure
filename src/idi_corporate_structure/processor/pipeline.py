@@ -883,10 +883,6 @@ class SubsidiaryPipeline(Pipeline):
             combined_subsidiaries_df = subsidiaries_df
 
         # Drop duplicate rows keyed on (parent_cik, accession_number, name)
-        if os.getenv("DEDUP_DEBUG"):
-            pre_dedup_path = str(self.config.output_file).replace(".parquet", ".pre_dedup.parquet")
-            combined_subsidiaries_df.to_parquet(pre_dedup_path)
-            self.logger.info("Pre-dedup snapshot saved to %s", pre_dedup_path)
         combined_subsidiaries_df = combined_subsidiaries_df.drop_duplicates(
             subset=["parent_cik", "accession_number", "name"]
         )

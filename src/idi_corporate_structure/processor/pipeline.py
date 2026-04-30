@@ -32,6 +32,10 @@ from idi_corporate_structure.processor.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
 )
+from idi_corporate_structure.processor.normalization import (
+    normalize_parent_location,
+    normalize_subsidiary_location,
+)
 from idi_corporate_structure.processor.types import (
     SUPPORTED_EXHIBIT_EXTENSIONS,
     Filing,
@@ -881,6 +885,16 @@ class SubsidiaryPipeline(Pipeline):
         except FileNotFoundError:
             self.logger.info("No existing subsidiaries found, creating new file")
             combined_subsidiaries_df = subsidiaries_df
+
+        # Canonicalize jurisdiction strings so the same place yields the same
+        # value across filings. Applied to merged historic + new rows so that
+        # alias-dict updates retroactively normalize older data on next write.
+        combined_subsidiaries_df["location"] = (
+            combined_subsidiaries_df["location"].fillna("").map(normalize_subsidiary_location)
+        )
+        combined_subsidiaries_df["parent_location"] = (
+            combined_subsidiaries_df["parent_location"].fillna("").map(normalize_parent_location)
+        )
 
         # Drop duplicate rows keyed on (parent_cik, accession_number, name)
         combined_subsidiaries_df = combined_subsidiaries_df.drop_duplicates(

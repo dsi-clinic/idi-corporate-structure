@@ -909,6 +909,57 @@ class TestSaveOutput:
         result_df = pd.read_parquet(pipeline.config.output_file)
         assert len(result_df) == 2
 
+    def test_normalizes_location_strings_on_write(self, pipeline):
+        """Footnote markers, sentinels, and country aliases should be canonicalized."""
+        subs = [
+            Subsidiary(
+                parent_cik="0000000001",
+                parent_name="ACME",
+                parent_location="DE",
+                name="Acme China Sub",
+                location="PRC",
+                filing_date="2024-01-01",
+                form_type="10-K",
+                exhibit_type="21",
+                accession_number="0000000001-24-000001",
+                exhibit_url="https://example.com/ex21.htm",
+            ),
+            Subsidiary(
+                parent_cik="0000000001",
+                parent_name="ACME",
+                parent_location="E9",
+                name="Acme Mexico Sub",
+                location="Mexico(2)",
+                filing_date="2024-01-01",
+                form_type="10-K",
+                exhibit_type="21",
+                accession_number="0000000001-24-000001",
+                exhibit_url="https://example.com/ex21.htm",
+            ),
+            Subsidiary(
+                parent_cik="0000000001",
+                parent_name="ACME",
+                parent_location="L2",
+                name="Acme Mystery Sub",
+                location="Unknown",
+                filing_date="2024-01-01",
+                form_type="10-K",
+                exhibit_type="21",
+                accession_number="0000000001-24-000001",
+                exhibit_url="https://example.com/ex21.htm",
+            ),
+        ]
+
+        pipeline.save_output(subs)
+
+        result_df = pd.read_parquet(pipeline.config.output_file).set_index("name")
+        assert result_df.loc["Acme China Sub", "location"] == "China"
+        assert result_df.loc["Acme China Sub", "parent_location"] == "Delaware"
+        assert result_df.loc["Acme Mexico Sub", "location"] == "Mexico"
+        assert result_df.loc["Acme Mexico Sub", "parent_location"] == "Cayman Islands"
+        assert result_df.loc["Acme Mystery Sub", "location"] == ""
+        assert result_df.loc["Acme Mystery Sub", "parent_location"] == "Ireland"
+
 
 # ── display_stats ─────────────────────────────────────────────────────────────
 

@@ -771,6 +771,157 @@ class TestJnjChunkingFixture:
         assert len([s for s in result if s.name == "ABD Holding Company, Inc."]) == 1
 
 
+class TestCleanName:
+    """Tests for _clean_name — invisible-character stripping and NBSP normalisation."""
+
+    def test_nbsp_replaced_with_space(self):
+        from idi_corporate_structure.processor.extractor import _clean_name
+
+        assert _clean_name("ASM\xa0Services") == "ASM Services"
+
+    def test_zwnj_stripped(self):
+        from idi_corporate_structure.processor.extractor import _clean_name
+
+        assert _clean_name("Silex Spain, S.L.\u200c") == "Silex Spain, S.L."
+
+    def test_zwsp_stripped(self):
+        from idi_corporate_structure.processor.extractor import _clean_name
+
+        assert _clean_name("Golden\u200bMinerals") == "GoldenMinerals"
+
+    def test_zwj_stripped(self):
+        from idi_corporate_structure.processor.extractor import _clean_name
+
+        assert _clean_name("Corp\u200d Ltd") == "Corp Ltd"
+
+    def test_bom_stripped(self):
+        from idi_corporate_structure.processor.extractor import _clean_name
+
+        assert _clean_name("\ufeffHoldings Inc.") == "Holdings Inc."
+
+    def test_html_entities_decoded(self):
+        from idi_corporate_structure.processor.extractor import _clean_name
+
+        assert _clean_name("Johnson &amp; Johnson") == "Johnson & Johnson"
+
+    def test_double_spaces_collapsed(self):
+        from idi_corporate_structure.processor.extractor import _clean_name
+
+        assert _clean_name("A\xa0 B") == "A B"
+
+    def test_real_world_golden_minerals_example(self):
+        from idi_corporate_structure.processor.extractor import _clean_name
+
+        dirty = "ASM Services\xa0S.a\xa0r.l.\u200c"
+        assert _clean_name(dirty) == "ASM Services S.a r.l."
+
+
+class TestCompactGroundingFallback:
+    """Tests for _compact and the compact fallback in _is_name_in_document."""
+
+    def test_compact_lowercases_and_strips_punctuation(self):
+        from idi_corporate_structure.processor.extractor import _compact
+
+        assert (
+            _compact("Johnson & Johnson (Singapore) HoldCo LLC")
+            == "johnsonjohnsonsingaporeholdcollc"
+        )
+
+    def test_strict_match_still_works(self):
+        from idi_corporate_structure.processor.extractor import _is_name_in_document
+
+        doc = "ABD Holding Company, Inc. (Delaware)"
+        assert _is_name_in_document("ABD Holding Company, Inc.", doc)
+
+    def test_jnj_singapore_matches_via_fallback(self):
+        """Model dropped the parens around 'Singapore' — compact fallback recovers it."""
+        from idi_corporate_structure.processor.extractor import _is_name_in_document
+
+        doc = "Johnson & Johnson (Singapore) HoldCo LLC, a Delaware corporation"
+        assert _is_name_in_document("Johnson & Johnson Singapore HoldCo LLC", doc)
+
+    def test_jnj_healthcare_matches_via_fallback(self):
+        """Model merged 'Health Care' into 'Healthcare' — compact fallback recovers it."""
+        from idi_corporate_structure.processor.extractor import _is_name_in_document
+
+        doc = "Johnson & Johnson Health Care Systems Inc. (New Jersey)"
+        assert _is_name_in_document("Johnson & Johnson Healthcare Systems Inc.", doc)
+
+    def test_empty_name_returns_false(self):
+        from idi_corporate_structure.processor.extractor import _is_name_in_document
+
+        assert not _is_name_in_document("", "some document text")
+
+    def test_hallucinated_name_still_returns_false(self):
+        """A name with no compact substring match is correctly rejected."""
+        from idi_corporate_structure.processor.extractor import _is_name_in_document
+
+        doc = "Johnson & Johnson Health Care Systems Inc. (New Jersey)"
+        assert not _is_name_in_document("Completely Made Up Pharma Corp", doc)
+
+    def test_no_false_match_on_unrelated_name(self):
+        """A name with no compact substring match is correctly rejected."""
+        from idi_corporate_structure.processor.extractor import _is_name_in_document
+
+        doc = "Pineapple Holdings Ltd (California)"
+        assert not _is_name_in_document("Acme Corporation", doc)
+
+    def test_compact_fallback_logs_debug(self, mocker):
+        """When the compact path fires, a DEBUG message is emitted."""
+        from idi_corporate_structure.processor import extractor as ext_mod
+
+        mock_logger = mocker.patch.object(ext_mod, "get_logger")
+        mock_log_instance = mock_logger.return_value
+
+        doc = "Johnson & Johnson (Singapore) HoldCo LLC, a Delaware corporation"
+        ext_mod._is_name_in_document("Johnson & Johnson Singapore HoldCo LLC", doc)
+
+        assert mock_log_instance.debug.called
+        call_args = mock_log_instance.debug.call_args[0]
+        assert "compact fallback" in call_args[0]
+
+
+class TestCleanNameWiredIntoExtract:
+    """End-to-end tests verifying _clean_name runs on every stored Subsidiary.name."""
+
+    def test_dirty_name_stored_clean(self, sample_filing, mocker):
+        """Invisible chars and NBSPs in the model's name are cleaned before storing."""
+        extractor = GptExtractor(openai_api_key="fake-key")
+        dirty_name = "ASM\xa0Services\u200c"
+        doc_content = "ASM Services (Delaware)"
+        mocker.patch.object(
+            extractor._openai_client,
+            "query_endpoint",
+            return_value=_make_openai_response(
+                [{"name": dirty_name, "location": "Delaware", "source_quote": "ASM Services"}]
+            ),
+        )
+        result, *_ = extractor.extract(sample_filing, make_exhibit_response(content=doc_content))
+
+        assert len(result) == 1
+        assert result[0].name == "ASM Services"
+
+    def test_compact_fallback_allows_grounding_and_name_stored(self, sample_filing, mocker):
+        """When the model's name differs by parens/spacing, compact fallback grounds it."""
+        extractor = GptExtractor(openai_api_key="fake-key")
+        doc_content = "Johnson & Johnson (Singapore) HoldCo LLC, a Delaware corporation"
+        model_name = "Johnson & Johnson Singapore HoldCo LLC"
+        mocker.patch.object(
+            extractor._openai_client,
+            "query_endpoint",
+            return_value=_make_openai_response(
+                [{"name": model_name, "location": "Delaware", "source_quote": model_name}]
+            ),
+        )
+        result, ungrounded, *_ = extractor.extract(
+            sample_filing, make_exhibit_response(content=doc_content)
+        )
+
+        assert ungrounded == 0, "Compact fallback should have accepted the name"
+        assert len(result) == 1
+        assert result[0].name == model_name
+
+
 class TestTakeOverlap:
     """Tests for _take_overlap (paragraph-aligned chunk overlap)."""
 

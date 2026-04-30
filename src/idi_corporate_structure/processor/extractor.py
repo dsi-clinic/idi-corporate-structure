@@ -46,6 +46,7 @@ _CHUNK_MAX_CHARS = 4_000
 _CHUNK_OVERLAP_CHARS = 400
 
 _INVISIBLE_CHARS_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
+_PUNCT_RE = re.compile(r"[^\w]+")
 
 
 class DocumentError(Exception):
@@ -523,21 +524,51 @@ def _chunk_document(text: str, max_chars: int, overlap_chars: int) -> list[str]:
     return chunks
 
 
+def _compact(s: str) -> str:
+    """Aggressive normalization: lowercase + strip all non-alphanumerics.
+
+    Used as a fallback grounding check for names the model returned with
+    minor punctuation or whitespace differences from the exhibit.
+
+    Args:
+        s: String to compact.
+
+    Returns:
+        Lowercased string with all non-word characters removed.
+    """
+    return _PUNCT_RE.sub("", _normalize(s))
+
+
 def _is_name_in_document(name: str, document: str) -> bool:
     """Check if a name appears in the document (the source of truth).
+
+    Tries a strict normalized substring match first. If that fails, falls
+    back to a compact (punctuation-stripped) match to catch cases where the
+    model returned a name with minor punctuation or whitespace differences
+    from the exhibit (e.g. dropped parentheses, "Health Care" vs
+    "Healthcare").
 
     Args:
         name: The name to check.
         document: The document text to check for the name.
 
     Returns:
-        True if the normalized name is a substring of the normalized
-        document, False otherwise.
+        True if the name is found via the strict or compact match,
+        False otherwise.
     """
     if not name:
         return False
 
-    return _normalize(name) in _normalize(document)
+    if _normalize(name) in _normalize(document):
+        return True
+
+    if _compact(name) in _compact(document):
+        get_logger(__name__).debug(
+            "Name %r matched via compact fallback (model produced a slight variant)", name
+        )
+        return True
+
+    return False
 
 
 def _normalize(s: str) -> str:

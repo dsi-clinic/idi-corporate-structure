@@ -457,7 +457,7 @@ class SubsidiaryPipeline(Pipeline):
             A list of Filing objects
         """
         filings = []
-        with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
+        with open_zip(self.config.input_file, headers=self.sec_client.sec_headers) as zf:
             namelist = zf.namelist()
             if self._INPUT_SAMPLE_SIZE:
                 namelist = namelist[: self._INPUT_SAMPLE_SIZE]

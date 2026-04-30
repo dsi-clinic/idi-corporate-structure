@@ -355,6 +355,11 @@ class SecClient(ApiClient):
         super().__init__(rate_limit=rate_limit)
         self._sec_headers = {"User-Agent": user_agent}
 
+    @property
+    def sec_headers(self) -> dict:
+        """Return the SEC header for querying."""
+        return self._sec_headers
+
     def query_endpoint(
         self, sec_url: str, return_json: bool = True, return_bytes: bool = False
     ) -> dict[str, Any]:

@@ -33,7 +33,7 @@ import pandas as pd
 import requests
 
 from idi_corporate_structure.common.api import SecClient
-from idi_corporate_structure.processor.extractor import _html_to_text, _normalize
+from idi_corporate_structure.processor.extractor import _normalize, html_to_text
 
 _DEFAULT_SAMPLE_SIZE = 30
 _LOCATION_EMPTY_RATE_THRESHOLD = 0.15
@@ -172,7 +172,7 @@ def _fetch_exhibit_text(url: str, sec_client: SecClient) -> str:
     result = sec_client.query_endpoint(url, return_json=False)
     if "error" in result:
         raise RuntimeError(result["error"])
-    return _html_to_text(result["data"])
+    return html_to_text(result["data"])
 
 
 def _name_in_plain(name_norm: str, plain_norm: str) -> bool:
@@ -266,7 +266,7 @@ def check_grounding(ctx: VerifyContext) -> list[str]:
 
     Name check:
       - Verifies every subsidiary name appears in the plain-text exhibit (using the
-        same _normalize + _html_to_text used by the extractor).
+        same _normalize + html_to_text used by the extractor).
 
     Location check:
       - For rows with a non-empty location, verifies the location appears within

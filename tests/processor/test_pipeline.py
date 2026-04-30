@@ -10,9 +10,8 @@ from unittest.mock import MagicMock
 import pandas as pd
 
 from idi_corporate_structure.processor.extractor import (
-    ExtractionTimeoutError,
     ExtractionTruncatedError,
-    _html_to_text as html_to_text,
+    html_to_text,
 )
 from idi_corporate_structure.processor.failures import FailureType
 from idi_corporate_structure.processor.types import Filing, Subsidiary
@@ -643,7 +642,7 @@ class TestProcess:
 
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=exhibit_content)
         pipeline.extractor.extract.side_effect = [
-            ([self._make_subsidiary(f.cik)], 0, 0) for f in filings
+            ([self._make_subsidiary(f.cik)], 0, 0, 1) for f in filings
         ]
 
         results = pipeline.process(filings)
@@ -672,8 +671,8 @@ class TestProcess:
         subsidiary = self._make_subsidiary("CIK0000000000")
         pipeline.extractor.extract.side_effect = [
             RuntimeError("GPT error"),
-            ([subsidiary], 0, 0),
-            ([subsidiary], 0, 0),
+            ([subsidiary], 0, 0, 1),
+            ([subsidiary], 0, 0, 1),
         ]
 
         results = pipeline.process(filings)
@@ -689,6 +688,7 @@ class TestProcess:
             [self._make_subsidiary("CIK0000000000"), self._make_subsidiary("CIK0000000000")],
             0,
             0,
+            1,
         )
 
         pipeline.process(filings)
@@ -730,7 +730,7 @@ class TestExtractWorker:
             accession_number=sample_filing.accession_number,
             exhibit_url="",
         )
-        pipeline.extractor.extract.return_value = ([subsidiary], 0, 0)
+        pipeline.extractor.extract.return_value = ([subsidiary], 0, 0, 1)
 
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
@@ -780,6 +780,28 @@ class TestExtractWorker:
         spy.assert_called_once_with(
             (sample_filing.cik, sample_filing.filename), FailureType.EXTRACTION_FAILED
         )
+
+    def test_chunked_extraction_increments_stat(self, pipeline, sample_filing):
+        pipeline.extractor.extract.return_value = ([], 0, 0, 5)  # 5 chunks
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, make_exhibit_response()))
+        work_queue.join()
+
+        assert pipeline.stats.chunked_extractions == 1
+
+    def test_one_shot_does_not_increment_chunked(self, pipeline, sample_filing):
+        pipeline.extractor.extract.return_value = ([], 0, 0, 1)  # single chunk
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, make_exhibit_response()))
+        work_queue.join()
+
+        assert pipeline.stats.chunked_extractions == 0
 
     def test_truncated_extraction_increments_truncated_and_failed(
         self, pipeline, sample_filing, mocker

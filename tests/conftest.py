@@ -104,7 +104,7 @@ def mock_sec_client() -> MagicMock:
 def mock_extractor() -> MagicMock:
     """A MagicMock GptExtractor that returns an empty subsidiary list by default."""
     extractor = MagicMock(spec=GptExtractor)
-    extractor.extract.return_value = ([], 0)
+    extractor.extract.return_value = ([], 0, 0, 1)
     return extractor
 
 

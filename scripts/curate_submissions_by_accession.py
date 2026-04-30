@@ -132,9 +132,7 @@ def curate(
 def _parse_filing(spec: str) -> tuple[str, str]:
     """Parse a ``CIK:ACCESSION`` argument."""
     if ":" not in spec:
-        raise argparse.ArgumentTypeError(
-            f"Filing spec must be CIK:ACCESSION, got {spec!r}"
-        )
+        raise argparse.ArgumentTypeError(f"Filing spec must be CIK:ACCESSION, got {spec!r}")
     cik, acc = spec.split(":", 1)
     return cik.strip(), acc.strip()
 

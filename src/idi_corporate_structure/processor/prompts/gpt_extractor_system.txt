@@ -35,3 +35,10 @@ snippet.
 Include all subsidiaries. If the document groups subsidiaries under parents
 or categories, flatten and return every named entity as its own row,
 regardless of hierarchy.
+
+Process the document from beginning to end. Each row in the subsidiaries
+table is a separate entity that must appear in your output. Do not
+summarize, sample, or stop early.
+
+Do not return a representative sample. Do not skip entries that appear
+similar to others. Every named entity is a separate row.

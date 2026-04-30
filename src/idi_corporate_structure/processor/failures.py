@@ -27,6 +27,7 @@ class FailureType(StrEnum):
     DOCUMENT_ERROR = "document_error"  # Document is too long to process
     EXTRACTION_FAILED = "extraction_failed"  # GPT returned no structured data
     TIMEOUT_ERROR = "timeout_error"  # OpenAI API timed out
+    TRUNCATED_ERROR = "truncated_error"  # Model response cut off at output token limit
     API_ERROR = "api_error"  # HTTP failure fetching filing document
     RATE_LIMIT = "rate_limit"  # SEC rate limit (429)
     NO_SUBSIDIARIES = "no_subsidiaries"  # No subsidiaries found for filing
@@ -46,6 +47,7 @@ class CorporateStructureFailureClassifier(FailureClassifier):
             FailureType.DOCUMENT_ERROR,
             FailureType.NO_OVERFLOW_FILINGS,
             FailureType.NO_SUBSIDIARIES,
+            FailureType.TRUNCATED_ERROR,
         }
     )
 

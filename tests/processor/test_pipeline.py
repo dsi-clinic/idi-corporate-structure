@@ -9,7 +9,11 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 
-from idi_corporate_structure.processor.extractor import _html_to_text as html_to_text
+from idi_corporate_structure.processor.extractor import (
+    ExtractionTimeoutError,
+    ExtractionTruncatedError,
+    _html_to_text as html_to_text,
+)
 from idi_corporate_structure.processor.failures import FailureType
 from idi_corporate_structure.processor.types import Filing, Subsidiary
 from tests.conftest import make_cik_json, make_directory_response, make_exhibit_response
@@ -775,6 +779,24 @@ class TestExtractWorker:
 
         spy.assert_called_once_with(
             (sample_filing.cik, sample_filing.filename), FailureType.EXTRACTION_FAILED
+        )
+
+    def test_truncated_extraction_increments_truncated_and_failed(
+        self, pipeline, sample_filing, mocker
+    ):
+        pipeline.extractor.extract.side_effect = ExtractionTruncatedError("output cut off")
+        spy = mocker.spy(pipeline.failure_registry, "add")
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, make_exhibit_response()))
+        work_queue.join()
+
+        assert pipeline.stats.truncated_extractions == 1
+        assert pipeline.stats.failed_subsidiaries == 1
+        spy.assert_called_once_with(
+            (sample_filing.cik, sample_filing.filename), FailureType.TRUNCATED_ERROR
         )
 
 

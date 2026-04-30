@@ -30,6 +30,18 @@ def get_args() -> argparse.Namespace:
         default=os.environ.get("OPENAI_API_KEY"),
         help="OpenAI API key (falls back to OPENAI_API_KEY env var)",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=os.environ.get("OPENAI_MODEL", ""),
+        help="OpenAI model ID for extraction (falls back to OPENAI_MODEL env var, then default)",
+    )
+    parser.add_argument(
+        "--sec-user-agent",
+        type=str,
+        default=os.environ.get("SEC_USER_AGENT", ""),
+        help="SEC EDGAR User-Agent header value (falls back to SEC_USER_AGENT env var)",
+    )
     parser.add_argument("--rate-limit", type=float, default=0.2, help="Rate limit")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of workers")
     return parser.parse_args()
@@ -44,6 +56,10 @@ def main() -> None:
         msg = "OpenAI API key required via --openai-api-key or OPENAI_API_KEY env var"
         raise SystemExit(msg)
 
+    if not args.sec_user_agent:
+        msg = "SEC User-Agent required via --sec-user-agent or SEC_USER_AGENT env var"
+        raise SystemExit(msg)
+
     config = PipelineConfig(
         input_file=args.input_file,
         output_file=args.output_file,
@@ -52,8 +68,8 @@ def main() -> None:
         num_workers=args.num_workers,
         openai_api_key=args.openai_api_key,
     )
-    sec_client = SecClient(rate_limit=config.rate_limit)
-    extractor = GptExtractor(openai_api_key=config.openai_api_key)
+    sec_client = SecClient(rate_limit=config.rate_limit, user_agent=args.sec_user_agent)
+    extractor = GptExtractor(openai_api_key=config.openai_api_key, model=args.model)
     pipeline = SubsidiaryPipeline(config=config, sec_client=sec_client, extractor=extractor)
     pipeline.run()
 

@@ -52,6 +52,12 @@ class ExtractionTimeoutError(RuntimeError):
     pass
 
 
+class ExtractionTruncatedError(RuntimeError):
+    """Raised when the model's extraction response was cut off by the output token limit."""
+
+    pass
+
+
 class Extractor(ABC):
     """Interface for extracting subsidiaries from a single exhibit document."""
 
@@ -74,13 +80,24 @@ class GptExtractor(Extractor):
     """Extracts subsidiaries from a single exhibit document using GPT."""
 
     _DOCUMENT_ERROR_STATUS_CODE = 400
+    # Maximum output tokens. Set explicitly so that truncation surfaces as
+    # finish_reason="length" rather than depending on API defaults.
+    _MAX_COMPLETION_TOKENS = 32768
+    _DEFAULT_MODEL = "gpt-4.1-nano"
     _SYSTEM_PROMPT: str = (
         _PROMPTS.joinpath("gpt_extractor_system.txt").read_text(encoding="utf-8").strip()
     )
 
-    def __init__(self, openai_api_key: str) -> None:
-        """Initialize the GPT extractor with the OpenAI API key."""
+    def __init__(self, openai_api_key: str, model: str = "") -> None:
+        """Initialize the GPT extractor with the OpenAI API key.
+
+        Args:
+            openai_api_key: OpenAI API key.
+            model: OpenAI model ID to use for extraction.  Defaults to
+                ``_DEFAULT_MODEL`` when omitted or empty.
+        """
         self._openai_client = OpenAiClient(api_key=openai_api_key)
+        self._model = model or self._DEFAULT_MODEL
         self._logger = get_logger(__name__)
 
     def _get_request_data_json(self, document: str) -> dict:
@@ -99,7 +116,8 @@ class GptExtractor(Extractor):
             ``model``, ``messages``, and ``response_format`` keys.
         """
         return {
-            "model": "gpt-4.1-nano",
+            "model": self._model,
+            "max_completion_tokens": self._MAX_COMPLETION_TOKENS,
             "messages": [
                 {
                     "role": "system",
@@ -150,6 +168,9 @@ class GptExtractor(Extractor):
         Raises:
             DocumentError: If the API returns a 400-level status code, indicating
                 the document itself is malformed or too long.
+            ExtractionTimeoutError: If the API call timed out.
+            ExtractionTruncatedError: If the model response was cut off by the
+                output token limit (``finish_reason == "length"``).
             RuntimeError: If the API returns any other error.
         """
         post_data = self._get_request_data_json(document)
@@ -162,7 +183,18 @@ class GptExtractor(Extractor):
                 raise ExtractionTimeoutError(response["error"])
             raise RuntimeError(response["error"])
 
-        content = response["data"]["choices"][0]["message"]["content"]
+        choice = response["data"]["choices"][0]
+        finish_reason = choice.get("finish_reason")
+        usage = response["data"].get("usage", {})
+        self._logger.debug("OpenAI extraction finish_reason=%s usage=%s", finish_reason, usage)
+
+        if finish_reason == "length":
+            raise ExtractionTruncatedError(
+                f"Model response truncated at output token limit "
+                f"(max_completion_tokens={self._MAX_COMPLETION_TOKENS}, usage={usage})"
+            )
+
+        content = choice["message"]["content"]
         return json.loads(content)
 
     @staticmethod

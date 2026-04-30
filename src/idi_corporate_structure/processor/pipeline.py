@@ -25,6 +25,7 @@ from idi_corporate_structure.common.storage import open_zip
 from idi_corporate_structure.processor.extractor import (
     DocumentError,
     ExtractionTimeoutError,
+    ExtractionTruncatedError,
     GptExtractor,
     _html_to_text,
 )
@@ -568,6 +569,19 @@ class SubsidiaryPipeline(Pipeline):
                     stat_keys=("failed_subsidiaries", "timeout_subsidiaries"),
                 )
 
+            except ExtractionTruncatedError as e:
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.TRUNCATED_ERROR,
+                    "error",
+                    "Truncated extraction for filing: %s - %s - %s: %s",
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
+                    e,
+                    stat_keys=("failed_subsidiaries", "truncated_extractions"),
+                )
+
             except Exception:
                 self._record_failure(
                     (filing.cik, filing.filename),
@@ -934,6 +948,7 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("    Total:    %d", self.stats.total_subsidiaries)
         self.logger.info("    Failed:   %d", self.stats.failed_subsidiaries)
         self.logger.info("    Timeouts: %d", self.stats.timeout_subsidiaries)
+        self.logger.info("    Truncated: %d", self.stats.truncated_extractions)
         self.logger.info("    Zero:     %d", self.stats.zero_subsidiaries)
         self.logger.info("    Ungrounded name:     %d", self.stats.ungrounded_name)
         self.logger.info("    Ungrounded location: %d", self.stats.ungrounded_location)

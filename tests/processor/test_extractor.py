@@ -4,7 +4,11 @@ import json
 
 import pytest
 
-from idi_corporate_structure.processor.extractor import ExtractionTimeoutError, GptExtractor
+from idi_corporate_structure.processor.extractor import (
+    ExtractionTimeoutError,
+    ExtractionTruncatedError,
+    GptExtractor,
+)
 from idi_corporate_structure.processor.types import Subsidiary
 from tests.conftest import make_exhibit_response
 
@@ -13,12 +17,20 @@ _QUOTE_APPLE_OPS = "Apple Operations LLC (Delaware)"
 _QUOTE_APPLE_EU = "Apple Europe Ltd (Ireland)"
 
 
-def _make_openai_response(subsidiaries: list[dict]) -> dict:
+def _make_openai_response(subsidiaries: list[dict], finish_reason: str = "stop") -> dict:
     """Build a fake OpenAI chat completions response dict."""
     return {
         "status_code": 200,
         "url": "https://api.openai.com/v1/chat/completions",
-        "data": {"choices": [{"message": {"content": json.dumps({"subsidiaries": subsidiaries})}}]},
+        "data": {
+            "choices": [
+                {
+                    "message": {"content": json.dumps({"subsidiaries": subsidiaries})},
+                    "finish_reason": finish_reason,
+                }
+            ],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+        },
     }
 
 
@@ -152,6 +164,56 @@ class TestGptExtractor:
 
         with pytest.raises(ExtractionTimeoutError):
             extractor.extract(sample_filing, make_exhibit_response())
+
+    # ── Truncation tests ──────────────────────────────────────────────────────
+
+    def test_raises_truncated_error_on_finish_reason_length(self, sample_filing, mocker):
+        extractor = GptExtractor(openai_api_key="fake-key")
+        mocker.patch.object(
+            extractor._openai_client,
+            "query_endpoint",
+            return_value=_make_openai_response(
+                [
+                    {
+                        "name": "Apple Operations LLC",
+                        "location": "Delaware",
+                        "source_quote": _QUOTE_APPLE_OPS,
+                    }
+                ],
+                finish_reason="length",
+            ),
+        )
+
+        with pytest.raises(ExtractionTruncatedError):
+            extractor.extract(sample_filing, make_exhibit_response())
+
+    def test_finish_reason_stop_parses_normally(self, sample_filing, mocker):
+        extractor = GptExtractor(openai_api_key="fake-key")
+        mocker.patch.object(
+            extractor._openai_client,
+            "query_endpoint",
+            return_value=_make_openai_response(
+                [
+                    {
+                        "name": "Apple Operations LLC",
+                        "location": "Delaware",
+                        "source_quote": _QUOTE_APPLE_OPS,
+                    }
+                ],
+                finish_reason="stop",
+            ),
+        )
+        result, *_ = extractor.extract(sample_filing, make_exhibit_response())
+
+        assert len(result) == 1
+        assert result[0].name == "Apple Operations LLC"
+
+    def test_request_payload_sets_max_completion_tokens(self):
+        extractor = GptExtractor(openai_api_key="fake-key")
+        payload = extractor._get_request_data_json("some document text")
+
+        assert "max_completion_tokens" in payload
+        assert payload["max_completion_tokens"] == GptExtractor._MAX_COMPLETION_TOKENS
 
     # ── Grounding tests ───────────────────────────────────────────────────────
 

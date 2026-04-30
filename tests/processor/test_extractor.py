@@ -489,18 +489,28 @@ class TestChunkDocument:
                 # Each line is either a "Paragraph N" entry or empty
                 assert stripped == "" or stripped.startswith("Paragraph ")
 
-    def test_chunks_have_overlap(self):
+    def test_chunks_overlap_with_whole_paragraphs(self):
+        """Overlap is paragraph-aligned.
+
+        Each non-first chunk starts with one or more complete paragraphs that
+        also appeared at the end of the previous chunk.
+        """
         from idi_corporate_structure.processor.extractor import _chunk_document
 
         paragraphs = [f"para{i}_" + "x" * 100 for i in range(15)]
         text = "\n\n".join(paragraphs)
-        chunks = _chunk_document(text, max_chars=400, overlap_chars=50)
+        chunks = _chunk_document(text, max_chars=400, overlap_chars=150)
 
         assert len(chunks) > 1
-        # Each non-first chunk's start should match the previous chunk's tail
         for i in range(1, len(chunks)):
-            tail = chunks[i - 1][-50:]
-            assert chunks[i].startswith(tail)
+            prev_paras = chunks[i - 1].split("\n\n")
+            curr_paras = chunks[i].split("\n\n")
+            # The first paragraph of chunk i must equal the last paragraph of chunk i-1.
+            # That guarantees overlap text never bisects an entity row.
+            assert curr_paras[0] == prev_paras[-1], (
+                f"Chunk {i} should start with the last paragraph of chunk {i - 1}, "
+                f"but got {curr_paras[0]!r} vs {prev_paras[-1]!r}"
+            )
 
     def test_oversized_paragraph_emitted_as_own_chunk(self):
         from idi_corporate_structure.processor.extractor import _chunk_document
@@ -759,3 +769,46 @@ class TestJnjChunkingFixture:
 
         assert num_chunks > 1
         assert len([s for s in result if s.name == "ABD Holding Company, Inc."]) == 1
+
+
+class TestTakeOverlap:
+    """Tests for _take_overlap (paragraph-aligned chunk overlap)."""
+
+    def test_returns_empty_when_overlap_is_zero(self):
+        from idi_corporate_structure.processor.extractor import _take_overlap
+
+        assert _take_overlap("anything\n\nelse", overlap_chars=0) == ""
+
+    def test_returns_only_whole_paragraphs(self):
+        """Overlap never includes a partial paragraph, even if a whole one exceeds the budget."""
+        from idi_corporate_structure.processor.extractor import _take_overlap
+
+        text = "para1\n\npara2\n\nlongest_paragraph_with_lots_of_content"
+        overlap = _take_overlap(text, overlap_chars=20)
+
+        # The final paragraph alone exceeds 20 chars but must still be returned whole.
+        assert overlap == "longest_paragraph_with_lots_of_content"
+
+    def test_takes_multiple_paragraphs_within_budget(self):
+        from idi_corporate_structure.processor.extractor import _take_overlap
+
+        text = "para1\n\npara2\n\npara3\n\npara4"
+        overlap = _take_overlap(text, overlap_chars=100)
+
+        # All paragraphs fit within 100 chars, so all are kept.
+        assert overlap == text
+
+    def test_no_partial_word_at_overlap_boundary(self):
+        """Regression test for the Transco 'Eight Project LLC' bug: overlap never bisects a name."""
+        from idi_corporate_structure.processor.extractor import _take_overlap
+
+        text = (
+            "Perryville Gas Storage LLC Delaware\n\n"
+            "Power Eight Project LLC Delaware\n\n"
+            "Reserveco Inc. Delaware"
+        )
+        overlap = _take_overlap(text, overlap_chars=30)
+
+        # Whatever fits, it must be the whole final paragraph — never a slice of "Power Eight Project LLC".
+        assert "wer Eight Project LLC" not in overlap
+        assert overlap.startswith("Power Eight Project LLC") or overlap == "Reserveco Inc. Delaware"

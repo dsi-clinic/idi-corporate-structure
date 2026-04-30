@@ -45,6 +45,8 @@ _CHUNK_THRESHOLD_CHARS = 4_000
 _CHUNK_MAX_CHARS = 4_000
 _CHUNK_OVERLAP_CHARS = 400
 
+_INVISIBLE_CHARS_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
+
 
 class DocumentError(Exception):
     """Exception raised for document-specific errors."""
@@ -106,7 +108,7 @@ class GptExtractor(Extractor):
         self._model = model or self._DEFAULT_MODEL
         self._logger = get_logger(__name__)
 
-    def _extract_with_chunking(self, doc_text: str) -> tuple[list[dict], int]:
+    def _extract_with_chunking(self, doc_text: str, company_name: str) -> tuple[list[dict], int]:
         """Run extraction one-shot, falling back to chunked extraction if needed.
 
         Two triggers cause chunking:
@@ -118,35 +120,37 @@ class GptExtractor(Extractor):
 
         Args:
             doc_text: Full plain-text exhibit content.
+            company_name: String name of the filing company
 
         Returns:
             Tuple of (raw subsidiary dicts from the model, num chunks used).
             ``num_chunks == 1`` means no chunking was performed.
         """
         if len(doc_text) > _CHUNK_THRESHOLD_CHARS:
-            return self._summarize_chunks(doc_text)
+            return self._summarize_chunks(doc_text, company_name)
 
         try:
             return self._summarize(doc_text).get("subsidiaries", []), 1
         except ExtractionTruncatedError:
             self._logger.info("One-shot extraction truncated; retrying with chunking")
-            return self._summarize_chunks(doc_text)
+            return self._summarize_chunks(doc_text, company_name)
 
-    def _summarize_chunks(self, doc_text: str) -> tuple[list[dict], int]:
+    def _summarize_chunks(self, doc_text: str, company_name: str) -> tuple[list[dict], int]:
         """Chunk ``doc_text`` and run a separate summarize call per chunk.
 
         Args:
-            doc_text: Full plain-text exhibit content.
+            doc_text: Full plain-text exhibit content
+            company_name: String name of the filing company
 
         Returns:
-            Tuple of (concatenated raw subsidiaries from all chunks, chunk count).
+            Tuple of (concatenated raw subsidiaries from all chunks, chunk count)
 
         Raises:
             ExtractionTruncatedError: If any individual chunk truncates — the
                 chunk-size constants need tuning down.
         """
         chunks = _chunk_document(doc_text, _CHUNK_MAX_CHARS, _CHUNK_OVERLAP_CHARS)
-        self._logger.info("Chunked extraction: %d chunks", len(chunks))
+        self._logger.info("%s chunked extraction: %d chunks", company_name, len(chunks))
         all_subs: list[dict] = []
         for i, chunk in enumerate(chunks, 1):
             try:
@@ -360,7 +364,7 @@ class GptExtractor(Extractor):
             RuntimeError: If the OpenAI API returns any other error.
         """
         # Summarize the subsidiaries in the exhibit
-        raw_subs, num_chunks = self._extract_with_chunking(document["data"])
+        raw_subs, num_chunks = self._extract_with_chunking(document["data"], filing.company_name)
 
         # Dedupe by normalized name
         deduped = dedup_by_name(raw_subs=raw_subs)
@@ -381,7 +385,7 @@ class GptExtractor(Extractor):
                 exhibit_type=filing.exhibit_type,
                 accession_number=filing.accession_number,
                 exhibit_url=document["url"],
-                name=_html.unescape(sub["name"]),
+                name=_clean_name(sub["name"]),
                 location=sub.get("location") or "",
                 source_quote=sub.get("source_quote") or "",
             )
@@ -422,6 +426,42 @@ def html_to_text(raw_html: str) -> str:
     lines = [_INLINE_WS_RE.sub(" ", line).strip() for line in text.split("\n")]
     collapsed = _MULTINEWLINE_RE.sub("\n\n", "\n".join(lines))
     return collapsed.strip()
+
+
+def _take_overlap(chunk_text: str, overlap_chars: int) -> str:
+    r"""Return the trailing whole paragraphs of ``chunk_text`` fitting in ``overlap_chars``.
+
+    Used to build the overlap region between adjacent chunks. By taking only
+    whole paragraphs, we guarantee the overlap text never bisects an entity row
+    — so the next chunk never begins with a partial name like ``"wer Eight
+    Project LLC"`` that the model would mis-extract as ``"Eight Project LLC"``.
+
+    Always returns at least the final paragraph, even if it exceeds
+    ``overlap_chars``, so the boundary entity is always carried forward.
+
+    Args:
+        chunk_text: The just-emitted chunk's full text.
+        overlap_chars: Soft budget for the overlap region.
+
+    Returns:
+        Joined paragraphs (with ``\n\n`` separators) or empty string when
+        ``overlap_chars <= 0``.
+    """
+    if overlap_chars <= 0:
+        return ""
+
+    paragraphs = chunk_text.split("\n\n")
+    overlap_paras: list[str] = []
+    overlap_len = 0
+
+    for para in reversed(paragraphs):
+        # +2 accounts for the "\n\n" separator we'd add when joining
+        if overlap_paras and overlap_len + len(para) + 2 > overlap_chars:
+            break
+        overlap_paras.insert(0, para)
+        overlap_len += len(para) + 2
+
+    return "\n\n".join(overlap_paras)
 
 
 def _chunk_document(text: str, max_chars: int, overlap_chars: int) -> list[str]:
@@ -470,7 +510,7 @@ def _chunk_document(text: str, max_chars: int, overlap_chars: int) -> list[str]:
 
         if current_len + para_len > max_chars and current:
             chunks.append("\n\n".join(current))
-            tail = chunks[-1][-overlap_chars:] if overlap_chars > 0 else ""
+            tail = _take_overlap(chunks[-1], overlap_chars)
             current = [tail] if tail else []
             current_len = len(tail)
 
@@ -526,3 +566,18 @@ def dedup_by_name(raw_subs: list[dict]) -> list[dict]:
             seen.add(key)
             deduped.append(sub)
     return deduped
+
+
+def _clean_name(name: str) -> str:
+    """Clean up subsidiary name.
+
+    Args:
+        name: String extracted for subsidiary name
+
+    Returns:
+        cleaned name string
+    """
+    name = _html.unescape(name)
+    name = _INVISIBLE_CHARS_RE.sub("", name)
+    name = name.replace("\xa0", " ")  # ← this line fixes most of the J&J diff
+    return " ".join(name.split())

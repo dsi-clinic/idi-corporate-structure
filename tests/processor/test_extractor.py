@@ -521,6 +521,36 @@ class TestChunkDocument:
         # The oversized middle paragraph must appear as its own chunk
         assert any(len(c) > 1000 for c in chunks)
 
+    def test_max_entries_cap_splits_dense_chunk(self):
+        """A char-budget-friendly run of many short paragraphs splits on the entry cap.
+
+        Models get lazy and silently drop entries when a single chunk asks
+        them to enumerate >75 short rows, even if the chunk easily fits in the
+        char window. This test pins the entry cap as a separate dimension.
+        """
+        from idi_corporate_structure.processor.extractor import _chunk_document
+
+        paragraphs = [f"Para{i}" for i in range(200)]
+        text = "\n\n".join(paragraphs)
+
+        no_cap = _chunk_document(text, max_chars=10_000, overlap_chars=0)
+        capped = _chunk_document(text, max_chars=10_000, overlap_chars=0, max_entries=75)
+
+        assert len(no_cap) == 1, "control: char budget alone should keep this in one chunk"
+        assert len(capped) >= 3, "200 entries / 75 cap should split into at least 3 chunks"
+        for c in capped:
+            assert c.count("\n\n") + 1 <= 75 + 1, "no chunk exceeds the entry cap (+1 for overlap)"
+
+    def test_max_entries_disabled_when_none(self):
+        """``max_entries=None`` reproduces the legacy char-only behaviour."""
+        from idi_corporate_structure.processor.extractor import _chunk_document
+
+        paragraphs = [f"Para{i}" for i in range(200)]
+        text = "\n\n".join(paragraphs)
+
+        chunks = _chunk_document(text, max_chars=10_000, overlap_chars=0, max_entries=None)
+        assert len(chunks) == 1
+
 
 class TestExtractWithChunking:
     """Tests for chunked extraction path in GptExtractor.extract()."""
@@ -653,6 +683,112 @@ class TestExtractWithChunking:
 
         assert num_chunks > 1
         assert len([s for s in result if s.name.lower() == "apple operations llc"]) == 1
+
+
+class TestPerChunkYieldLogging:
+    """Per-chunk ``input rows → extracted`` logging in _summarize_chunks.
+
+    The yield ratio is our cheapest signal for catching laziness regressions:
+    if a chunk has 116 rows and the model returns 70, that's a 0.60 yield and
+    deserves a WARNING in the run log.
+    """
+
+    def _build_chunked_doc(self, paragraphs: int = 300) -> dict:
+        """Build a document large enough (in chars) to trigger chunking."""
+        return make_exhibit_response(
+            content="\n\n".join(
+                f"Subsidiary Number {i:04d} Holdings LLC (Delaware)" for i in range(paragraphs)
+            )
+        )
+
+    def _make_extractor_with_capturable_logs(self, mocker):
+        """Build a GptExtractor whose logger propagates to the root (so caplog sees it)."""
+        extractor = GptExtractor(openai_api_key="fake-key")
+        mocker.patch.object(extractor._logger, "propagate", True)
+        return extractor
+
+    def test_yield_log_emitted_per_chunk(self, sample_filing, mocker, caplog):
+        """One yield log line per chunk, at INFO level when yield is healthy."""
+        import logging
+
+        extractor = self._make_extractor_with_capturable_logs(mocker)
+        mocker.patch.object(
+            extractor,
+            "_summarize",
+            return_value={
+                "subsidiaries": [
+                    {
+                        "name": "Apple Operations LLC",
+                        "location": "Delaware",
+                        "source_quote": _QUOTE_APPLE_OPS,
+                    }
+                ]
+                * 80
+            },
+        )
+
+        with caplog.at_level(logging.INFO, logger="idi_corporate_structure.processor.extractor"):
+            _, _, _, num_chunks = extractor.extract(sample_filing, self._build_chunked_doc())
+
+        yield_lines = [r for r in caplog.records if "input rows" in r.getMessage()]
+        assert len(yield_lines) == num_chunks
+        assert all("yield=" in r.getMessage() for r in yield_lines)
+
+    def test_low_yield_emits_warning(self, sample_filing, mocker, caplog):
+        """Chunk yield below _LOW_YIELD_RATIO is logged as a WARNING."""
+        import logging
+
+        extractor = self._make_extractor_with_capturable_logs(mocker)
+        mocker.patch.object(
+            extractor,
+            "_summarize",
+            return_value={
+                "subsidiaries": [
+                    {
+                        "name": "Apple Operations LLC",
+                        "location": "Delaware",
+                        "source_quote": _QUOTE_APPLE_OPS,
+                    }
+                ]
+            },
+        )
+
+        with caplog.at_level(logging.WARNING, logger="idi_corporate_structure.processor.extractor"):
+            extractor.extract(sample_filing, self._build_chunked_doc())
+
+        warnings = [
+            r for r in caplog.records if r.levelname == "WARNING" and "input rows" in r.getMessage()
+        ]
+        assert warnings, "low-yield chunk should produce a WARNING-level yield log"
+
+    def test_healthy_yield_does_not_warn(self, sample_filing, mocker, caplog):
+        """High-yield chunks do not emit WARNING-level yield logs."""
+        import logging
+
+        extractor = self._make_extractor_with_capturable_logs(mocker)
+
+        def echo(doc):
+            rows = [p for p in doc.split("\n\n") if p.strip()]
+            return {
+                "subsidiaries": [
+                    {
+                        "name": p.split(" (")[0],
+                        "location": "Delaware",
+                        "source_quote": p,
+                    }
+                    for p in rows
+                ]
+            }
+
+        mocker.patch.object(extractor, "_summarize", side_effect=echo)
+
+        with caplog.at_level(logging.WARNING, logger="idi_corporate_structure.processor.extractor"):
+            extractor.extract(sample_filing, self._build_chunked_doc())
+
+        warnings = [
+            r for r in caplog.records if r.levelname == "WARNING" and "input rows" in r.getMessage()
+        ]
+        assert not warnings, "healthy-yield chunks should not warn"
 
 
 class TestJnjChunkingFixture:

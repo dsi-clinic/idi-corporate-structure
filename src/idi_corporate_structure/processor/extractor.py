@@ -39,10 +39,9 @@ _CELL_TAGS = frozenset({"td", "th"})
 _INLINE_WS_RE = re.compile(r"[ \t\f\v]+")
 _MULTINEWLINE_RE = re.compile(r"\n{3,}")
 
-# Chunking thresholds — empirically tuned to keep gpt-4.1-nano output under
-# ~2K tokens per call, well below its self-imposed laziness ceiling of ~5K.
 _CHUNK_THRESHOLD_CHARS = 4_000
-_CHUNK_MAX_CHARS = 4_000
+_CHUNK_MAX_CHARS = 4_000  # protects the model's input window
+_CHUNK_MAX_ENTRIES = 75  # protects against per-chunk laziness
 _CHUNK_OVERLAP_CHARS = 400
 
 _INVISIBLE_CHARS_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
@@ -89,10 +88,9 @@ class GptExtractor(Extractor):
     """Extracts subsidiaries from a single exhibit document using GPT."""
 
     _DOCUMENT_ERROR_STATUS_CODE = 400
-    # Maximum output tokens. Set explicitly so that truncation surfaces as
-    # finish_reason="length" rather than depending on API defaults.
-    _MAX_COMPLETION_TOKENS = 32768
+    _MAX_COMPLETION_TOKENS = 32768  # surfaces finish_reason="length" when truncation occurs
     _DEFAULT_MODEL = "gpt-4.1-nano"
+    _LOW_YIELD_RATIO = 0.6  # per-chunk yield (output rows / input rows)
     _SYSTEM_PROMPT: str = (
         _PROMPTS.joinpath("gpt_extractor_system.txt").read_text(encoding="utf-8").strip()
     )
@@ -136,6 +134,32 @@ class GptExtractor(Extractor):
             self._logger.info("One-shot extraction truncated; retrying with chunking")
             return self._summarize_chunks(doc_text, company_name)
 
+    def _log_chunk(
+        self, chunk: str, chunk_subs: list[dict], company_name: str, i: int, num_chunks: int
+    ) -> None:
+        """Log the chunking process.
+
+        Args:
+            chunk: The chunk of text to log.
+            chunk_subs: The subsidiaries returned by the model for the chunk.
+            company_name: The name of the filing company.
+            i: The index of the chunk.
+            num_chunks: The number of chunks.
+        """
+        input_rows = chunk.count("\n\n") + 1
+        output_rows = len(chunk_subs)
+        yield_ratio = output_rows / input_rows if input_rows else 0.0
+        log = self._logger.warning if yield_ratio < self._LOW_YIELD_RATIO else self._logger.info
+        log(
+            "%s chunk %d/%d: %d input rows → %d extracted (yield=%.2f)",
+            company_name,
+            i,
+            num_chunks,
+            input_rows,
+            output_rows,
+            yield_ratio,
+        )
+
     def _summarize_chunks(self, doc_text: str, company_name: str) -> tuple[list[dict], int]:
         """Chunk ``doc_text`` and run a separate summarize call per chunk.
 
@@ -150,8 +174,11 @@ class GptExtractor(Extractor):
             ExtractionTruncatedError: If any individual chunk truncates — the
                 chunk-size constants need tuning down.
         """
-        chunks = _chunk_document(doc_text, _CHUNK_MAX_CHARS, _CHUNK_OVERLAP_CHARS)
+        chunks = _chunk_document(
+            doc_text, _CHUNK_MAX_CHARS, _CHUNK_OVERLAP_CHARS, _CHUNK_MAX_ENTRIES
+        )
         self._logger.info("%s chunked extraction: %d chunks", company_name, len(chunks))
+
         all_subs: list[dict] = []
         for i, chunk in enumerate(chunks, 1):
             try:
@@ -161,7 +188,11 @@ class GptExtractor(Extractor):
                     "Chunk %d/%d truncated — chunk size may be too large", i, len(chunks)
                 )
                 raise
-            all_subs.extend(result.get("subsidiaries", []))
+
+            chunk_subs = result.get("subsidiaries", [])
+            self._log_chunk(chunk, chunk_subs, company_name, i, len(chunks))
+            all_subs.extend(chunk_subs)
+
         return all_subs, len(chunks)
 
     def _get_request_data_json(self, document: str) -> dict:
@@ -465,27 +496,30 @@ def _take_overlap(chunk_text: str, overlap_chars: int) -> str:
     return "\n\n".join(overlap_paras)
 
 
-def _chunk_document(text: str, max_chars: int, overlap_chars: int) -> list[str]:
-    r"""Split text into overlapping chunks at paragraph boundaries.
+def _chunk_document(
+    text: str,
+    max_chars: int,
+    overlap_chars: int,
+    max_entries: int | None = None,
+) -> list[str]:
+    """Split text into overlapping chunks capped by character count and entry count.
 
-    Walks paragraphs (split on ``\\n\\n``), greedily packing them into chunks of
-    up to ``max_chars``. Each chunk after the first carries ``overlap_chars`` of
-    trailing text from the previous chunk to catch entries near the boundary;
-    the merge step deduplicates by name.
-
-    Oversized paragraphs (greater than ``max_chars``) are emitted as their own
-    chunk and a warning is logged — better one possibly-truncated chunk than a
-    corrupt entry split mid-row.
+    A chunk closes when the next paragraph would exceed ``max_chars`` OR the
+    chunk already holds ``max_entries`` paragraphs. The entry cap prevents
+    dense tables from packing too many rows into one chunk, which causes the
+    model to silently drop entries. Each chunk carries ``overlap_chars`` of
+    trailing text from the previous chunk; duplicates are removed by name.
 
     Args:
         text: Plain-text exhibit content to chunk.
-        max_chars: Soft maximum size per chunk.
+        max_chars: Soft maximum characters per chunk.
         overlap_chars: Trailing characters carried into the next chunk.
+        max_entries: Soft maximum paragraphs per chunk. ``None`` disables it.
 
     Returns:
-        Ordered list of chunk strings. A short ``text`` returns ``[text]``.
+        Ordered list of chunk strings. Returns ``[text]`` if no split needed.
     """
-    if len(text) <= max_chars:
+    if len(text) <= max_chars and (max_entries is None or text.count("\n\n") + 1 <= max_entries):
         return [text]
 
     logger = get_logger(__name__)
@@ -497,6 +531,7 @@ def _chunk_document(text: str, max_chars: int, overlap_chars: int) -> list[str]:
     for para in paragraphs:
         para_len = len(para) + 2  # account for "\n\n" separator
 
+        # Handle oversized paragraphs
         if para_len > max_chars:
             if current:
                 chunks.append("\n\n".join(current))
@@ -509,16 +544,21 @@ def _chunk_document(text: str, max_chars: int, overlap_chars: int) -> list[str]:
             chunks.append(para)
             continue
 
-        if current_len + para_len > max_chars and current:
+        # Handle character and entry caps
+        would_exceed_chars = current_len + para_len > max_chars
+        would_exceed_entries = max_entries is not None and len(current) >= max_entries
+        if (would_exceed_chars or would_exceed_entries) and current:
             chunks.append("\n\n".join(current))
-            tail = _take_overlap(chunks[-1], overlap_chars)
-            current = [tail] if tail else []
+            tail = _take_overlap(
+                chunks[-1], overlap_chars
+            )  # carry over overlap from previous chunk
+            current = [tail] if tail else []  # start new chunk with overlap
             current_len = len(tail)
 
-        current.append(para)
+        current.append(para)  # add current paragraph to current chunk
         current_len += para_len
 
-    if current:
+    if current:  # add last chunk if not empty
         chunks.append("\n\n".join(current))
 
     return chunks

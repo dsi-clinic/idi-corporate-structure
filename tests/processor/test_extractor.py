@@ -1009,27 +1009,6 @@ class TestCleanName:
         dirty = "ASM Services\xa0S.a\xa0r.l.\u200c"
         assert _clean_name(dirty) == "ASM Services S.a r.l."
 
-    def test_syn_control_char_stripped(self):
-        r"""\\x16 (SYN) is stripped — it appears when the model encodes & or ( from \\xa0-surrounded punctuation."""
-        from idi_corporate_structure.processor.extractor import _clean_name
-
-        assert (
-            _clean_name("Johnson \x16 Johnson Ukraine II LLC") == "Johnson Johnson Ukraine II LLC"
-        )
-
-    def test_multiple_c0_control_chars_stripped(self):
-        """Other C0 control characters are also stripped defensively."""
-        from idi_corporate_structure.processor.extractor import _clean_name
-
-        assert _clean_name("Acme\x01Corp\x1fLtd") == "AcmeCorpLtd"
-
-    def test_whitespace_control_chars_preserved_then_collapsed(self):
-        """Tab and newline are not stripped by the regex — they collapse via split/join."""
-        from idi_corporate_structure.processor.extractor import _clean_name
-
-        assert _clean_name("Acme\tCorp") == "Acme Corp"
-        assert _clean_name("Acme\nCorp") == "Acme Corp"
-
 
 class TestCompactGroundingFallback:
     """Tests for _compact and the compact fallback in _is_name_in_document."""

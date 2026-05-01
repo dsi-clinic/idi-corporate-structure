@@ -44,7 +44,7 @@ _CHUNK_MAX_CHARS = 4_000  # protects the model's input window
 _CHUNK_MAX_ENTRIES = 75  # protects against per-chunk laziness
 _CHUNK_OVERLAP_CHARS = 400
 
-_INVISIBLE_CHARS_RE = re.compile(r"[\x00-\x08\x0e-\x1f\x7f\u200b\u200c\u200d\ufeff]")
+_INVISIBLE_CHARS_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 _PUNCT_RE = re.compile(r"[^\w]+")
 
 

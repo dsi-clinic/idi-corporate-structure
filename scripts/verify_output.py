@@ -601,9 +601,8 @@ def main() -> None:
     )
 
     # Build a SEC client with retry/backoff and a per-instance User-Agent
-    sec_client = SecClient(rate_limit=args.rate_limit)
+    sec_client = SecClient(rate_limit=args.rate_limit, user_agent=args.user_agent)
     sec_client.max_retries = args.max_retries
-    sec_client.SEC_HEADERS = {"User-Agent": args.user_agent}
 
     # Create an object to hold the context for the checks
     ctx = VerifyContext(

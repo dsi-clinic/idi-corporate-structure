@@ -92,7 +92,7 @@ jobs:
       - name: Dependency vulnerability scan (pip-audit)
         run: |
           uv pip install pip-audit
-          uv run pip-audit --desc
+          uv run pip-audit --desc --ignore-vuln CVE-2026-3219  # Pip vulnerability, no current fix
 
       - name: CodeQL Analysis Init
         uses: github/codeql-action/init@v4

@@ -771,6 +771,64 @@ class TestJnjChunkingFixture:
         assert len([s for s in result if s.name == "ABD Holding Company, Inc."]) == 1
 
 
+class TestHtmlToText:
+    """Tests for html_to_text — ensuring table cells are space-delimited."""
+
+    def test_two_column_table_row_uses_space_separator(self):
+        """Each <td> cell is separated by a space."""
+        html = "<table><tr><td>Apsis</td><td>France</td></tr></table>"
+        result = html_to_text(html)
+        assert result == "Apsis France"
+
+    def test_multi_word_name_and_single_word_location(self):
+        r"""Multi-word names joined by \xa0 in the source are preserved."""
+        html = "<table><tr>" "<td>AMO\xa0Uppsala\xa0AB</td>" "<td>Sweden</td>" "</tr></table>"
+        result = html_to_text(html)
+        assert result == "AMO\xa0Uppsala\xa0AB Sweden"
+
+    def test_name_with_abbreviation_period_and_location(self):
+        """Names ending in 'S.L.' are preserved with a space before the location."""
+        html = "<table><tr>" "<td>Cilag-Biotech,&#160;S.L.</td>" "<td>Spain</td>" "</tr></table>"
+        result = html_to_text(html)
+        assert result == "Cilag-Biotech,\xa0S.L. Spain"
+
+    def test_multi_word_location(self):
+        """Multi-word locations (e.g. 'Cayman Islands') are kept intact after the space."""
+        html = "<table><tr>" "<td>AMO\xa0Ireland</td>" "<td>Cayman\xa0Islands</td>" "</tr></table>"
+        result = html_to_text(html)
+        assert result == "AMO\xa0Ireland Cayman\xa0Islands"
+
+    def test_multiple_rows_each_on_own_line(self):
+        """Multiple rows produce one space-delimited entry per line."""
+        html = (
+            "<table>"
+            "<tr><td>Alpha Corp</td><td>Delaware</td></tr>"
+            "<tr><td>Beta\xa0Inc.</td><td>Ireland</td></tr>"
+            "</table>"
+        )
+        lines = [line for line in html_to_text(html).splitlines() if line.strip()]
+        assert lines[0] == "Alpha Corp Delaware"
+        assert lines[1] == "Beta\xa0Inc. Ireland"
+
+    def test_three_column_table_space_delimited(self):
+        """Three-column rows produce two spaces between columns."""
+        html = (
+            "<table><tr>"
+            "<td>GEAE Technology, Inc.</td>"
+            "<td>100</td>"
+            "<td>Delaware</td>"
+            "</tr></table>"
+        )
+        result = html_to_text(html)
+        assert result == "GEAE Technology, Inc. 100 Delaware"
+
+    def test_non_table_content_unchanged(self):
+        """Plain paragraphs without table structure are not affected."""
+        html = "<p>Some plain text here.</p>"
+        result = html_to_text(html)
+        assert result == "Some plain text here."
+
+
 class TestCleanName:
     """Tests for _clean_name — invisible-character stripping and NBSP normalisation."""
 

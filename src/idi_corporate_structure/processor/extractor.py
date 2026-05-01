@@ -610,5 +610,5 @@ def _clean_name(name: str) -> str:
     """
     name = _html.unescape(name)
     name = _INVISIBLE_CHARS_RE.sub("", name)
-    name = name.replace("\xa0", " ")  # ← this line fixes most of the J&J diff
+    name = name.replace("\xa0", " ")
     return " ".join(name.split())

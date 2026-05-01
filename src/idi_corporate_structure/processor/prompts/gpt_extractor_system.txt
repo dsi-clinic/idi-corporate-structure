@@ -1,5 +1,5 @@
-Given a company's subsidiaries in plain text extracted from an SEC exhibit
-(tables preserved as rows), return JSON in this shape:
+Given a company's subsidiaries in plain text extracted from an SEC exhibit,
+return JSON in this shape:
 
 ```json
 {
@@ -11,9 +11,9 @@ Given a company's subsidiaries in plain text extracted from an SEC exhibit
 
 Fields:
 
-- name: the subsidiary name, copied exactly as it appears in the source — do
-not decode HTML entities, paraphrase, or normalise in any way. Do not alter,
-drop, or reorder any tokens:
+- name: the subsidiary name, copied exactly as it appears in the source —
+do not decode HTML entities, paraphrase, or normalise in any way. Do not
+alter, drop, or reorder any tokens:
     - Preserve all punctuation: "Abbott Laboratories, Ireland, Limited" must NOT
     become "Abbott Laboratories Ireland Limited"
     - Preserve dual-language legal suffixes verbatim: "Arrow ECS SA NV" must NOT

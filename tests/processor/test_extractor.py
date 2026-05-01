@@ -918,19 +918,19 @@ class TestHtmlToText:
 
     def test_multi_word_name_and_single_word_location(self):
         r"""Multi-word names joined by \xa0 in the source are preserved."""
-        html = "<table><tr>" "<td>AMO\xa0Uppsala\xa0AB</td>" "<td>Sweden</td>" "</tr></table>"
+        html = "<table><tr><td>AMO\xa0Uppsala\xa0AB</td><td>Sweden</td></tr></table>"
         result = html_to_text(html)
         assert result == "AMO\xa0Uppsala\xa0AB Sweden"
 
     def test_name_with_abbreviation_period_and_location(self):
         """Names ending in 'S.L.' are preserved with a space before the location."""
-        html = "<table><tr>" "<td>Cilag-Biotech,&#160;S.L.</td>" "<td>Spain</td>" "</tr></table>"
+        html = "<table><tr><td>Cilag-Biotech,&#160;S.L.</td><td>Spain</td></tr></table>"
         result = html_to_text(html)
         assert result == "Cilag-Biotech,\xa0S.L. Spain"
 
     def test_multi_word_location(self):
         """Multi-word locations (e.g. 'Cayman Islands') are kept intact after the space."""
-        html = "<table><tr>" "<td>AMO\xa0Ireland</td>" "<td>Cayman\xa0Islands</td>" "</tr></table>"
+        html = "<table><tr><td>AMO\xa0Ireland</td><td>Cayman\xa0Islands</td></tr></table>"
         result = html_to_text(html)
         assert result == "AMO\xa0Ireland Cayman\xa0Islands"
 
@@ -948,13 +948,7 @@ class TestHtmlToText:
 
     def test_three_column_table_space_delimited(self):
         """Three-column rows produce two spaces between columns."""
-        html = (
-            "<table><tr>"
-            "<td>GEAE Technology, Inc.</td>"
-            "<td>100</td>"
-            "<td>Delaware</td>"
-            "</tr></table>"
-        )
+        html = "<table><tr><td>GEAE Technology, Inc.</td><td>100</td><td>Delaware</td></tr></table>"
         result = html_to_text(html)
         assert result == "GEAE Technology, Inc. 100 Delaware"
 

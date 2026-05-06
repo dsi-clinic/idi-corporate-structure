@@ -168,7 +168,6 @@ def _fetch_exhibit_text(url: str, sec_client: SecClient) -> str:
     Raises:
         RuntimeError: when the client returns an ``error`` (network or HTTP).
     """
-    sec_client.rate_limit()
     result = sec_client.query_endpoint(url, return_json=False)
     if "error" in result:
         raise RuntimeError(result["error"])

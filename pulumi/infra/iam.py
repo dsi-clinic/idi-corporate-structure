@@ -96,7 +96,7 @@ task_execution_logs_policy = aws.iam.RolePolicy(
     ),
 )
 
-# Inline: read OpenAI API key from Secrets Manager
+# Inline: read pipeline secrets from Secrets Manager
 task_execution_secrets_policy = aws.iam.RolePolicy(
     "idi-policy-ecs-execution-secrets",
     role=task_execution_role.id,
@@ -110,7 +110,10 @@ task_execution_secrets_policy = aws.iam.RolePolicy(
                         "secretsmanager:GetSecretValue",
                         "secretsmanager:DescribeSecret",
                     ],
-                    "Resource": [secrets.openai_secret.arn],
+                    "Resource": [
+                        secrets.openai_secret.arn,
+                        secrets.sec_user_agent_secret.arn,
+                    ],
                 }
             ],
         }

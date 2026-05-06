@@ -45,7 +45,11 @@ def make_directory_response(items: list | None = None) -> dict:
     }
 
 
-def make_exhibit_response(content: str = "<html>Subsidiaries</html>") -> dict:
+def make_exhibit_response(
+    content: str = (
+        "<html><body>\nApple Operations LLC (Delaware)\nApple Europe Ltd (Ireland)\n</body></html>"
+    ),
+) -> dict:
     """Build a minimal SEC exhibit HTTP response dict."""
     return {
         "status_code": 200,
@@ -100,7 +104,7 @@ def mock_sec_client() -> MagicMock:
 def mock_extractor() -> MagicMock:
     """A MagicMock GptExtractor that returns an empty subsidiary list by default."""
     extractor = MagicMock(spec=GptExtractor)
-    extractor.extract.return_value = []
+    extractor.extract.return_value = ([], 0, 0, 1)
     return extractor
 
 

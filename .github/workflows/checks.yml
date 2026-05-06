@@ -92,7 +92,7 @@ jobs:
       - name: Dependency vulnerability scan (pip-audit)
         run: |
           uv pip install pip-audit
-          uv run pip-audit --desc
+          uv run pip-audit --desc --ignore-vuln CVE-2026-3219  # Pip vulnerability, no current fix
 
       - name: CodeQL Analysis Init
         uses: github/codeql-action/init@v4
@@ -151,4 +151,5 @@ jobs:
           pulumi config set idi:bucket_name ${{ secrets.BUCKET_NAME }}
           pulumi config set idi:input_file ${{ secrets.INPUT_FILE }}
           pulumi config set --secret idi:openai_api_key ${{ secrets.OPENAI_API_KEY }}
+          pulumi config set --secret idi:sec_user_agent "${{ secrets.SEC_USER_AGENT }}"
           uv run pulumi preview --non-interactive

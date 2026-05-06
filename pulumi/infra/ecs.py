@@ -41,6 +41,7 @@ memory = config.config.get("memory") or "4096"
 rate_limit = config.config.get("rate_limit") or "0.2"
 num_workers = config.config.get("num_workers") or "10"
 input_sample_size = config.config.get("input_sample_size") or "0"
+openai_model = config.config.get("openai_model") or "gpt-4.1-nano"
 
 # Build S3 paths from externally managed bucket (name from config)
 input_file = config.config.require("input_file")
@@ -52,7 +53,8 @@ container_definitions = pulumi.Output.all(
     image=ecr.orchestrator_image,
     log_group_name=log_group.name,
     region=config.aws_region,
-    secret_arn=secrets.openai_secret.arn,
+    openai_secret_arn=secrets.openai_secret.arn,
+    sec_user_agent_secret_arn=secrets.sec_user_agent_secret.arn,
 ).apply(
     lambda args: json.dumps(
         [
@@ -71,6 +73,8 @@ container_definitions = pulumi.Output.all(
                     rate_limit,
                     "--num-workers",
                     num_workers,
+                    "--model",
+                    openai_model,
                 ],
                 "environment": [
                     {"name": "AWS_REGION", "value": args["region"]},
@@ -81,8 +85,12 @@ container_definitions = pulumi.Output.all(
                 "secrets": [
                     {
                         "name": "OPENAI_API_KEY",
-                        "valueFrom": args["secret_arn"],
-                    }
+                        "valueFrom": args["openai_secret_arn"],
+                    },
+                    {
+                        "name": "SEC_USER_AGENT",
+                        "valueFrom": args["sec_user_agent_secret_arn"],
+                    },
                 ],
                 "logConfiguration": {
                     "logDriver": "awslogs",

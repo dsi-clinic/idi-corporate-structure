@@ -22,12 +22,23 @@ from idi_corporate_structure.common.api import SecClient
 from idi_corporate_structure.common.failures import FailureRegistry
 from idi_corporate_structure.common.logs import get_logger
 from idi_corporate_structure.common.storage import open_zip
-from idi_corporate_structure.processor.extractor import DocumentError, GptExtractor
+from idi_corporate_structure.processor.extractor import (
+    DocumentError,
+    ExtractionTimeoutError,
+    ExtractionTruncatedError,
+    GptExtractor,
+    html_to_text,
+)
 from idi_corporate_structure.processor.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
 )
+from idi_corporate_structure.processor.normalization import (
+    normalize_parent_location,
+    normalize_subsidiary_location,
+)
 from idi_corporate_structure.processor.types import (
+    SUPPORTED_EXHIBIT_EXTENSIONS,
     Filing,
     PipelineConfig,
     PipelineStats,
@@ -39,7 +50,10 @@ class Pipeline(ABC):
     """Baseline class for processing piplines."""
 
     def __init__(
-        self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
+        self,
+        config: PipelineConfig,
+        sec_client: SecClient,
+        extractor: GptExtractor,
     ) -> None:
         """Initialize the pipeline with config, SEC client, and extractor.
 
@@ -54,6 +68,7 @@ class Pipeline(ABC):
         self.extractor = extractor
         self.sec_client = sec_client
         self.stats = PipelineStats()
+        self.logger = get_logger(type(self).__name__)
 
     @abstractmethod
     def load_input(self) -> list:
@@ -110,10 +125,14 @@ class Pipeline(ABC):
         start_time = datetime.datetime.now()
 
         input_data = self.load_input()
-        results = self.process(input_data)
 
-        self.save_output(results)
-        self.display_stats()
+        if input_data:
+            results = self.process(input_data)
+            self.save_output(results)
+            self.display_stats()
+        else:
+            self.logger.info("No input data found, skipping pipeline")
+
         end_time = datetime.datetime.now()
         self.logger.info("Elasped time: %s", end_time - start_time)
 
@@ -130,7 +149,6 @@ class SubsidiaryPipeline(Pipeline):
     IS_OVERFLOW = re.compile(r"-submissions-\d+\.json$")
 
     _INPUT_SAMPLE_SIZE = int(os.environ.get("INPUT_SAMPLE_SIZE", 0))
-    _SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
     def __init__(
         self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
@@ -144,7 +162,6 @@ class SubsidiaryPipeline(Pipeline):
             extractor: Extractor used to parse subsidiary data from exhibit documents.
         """
         super().__init__(config, sec_client, extractor)
-        self.logger = get_logger("SubsidiaryPipeline")
         self.failure_registry = FailureRegistry(
             config.failure_file,
             classifier=CorporateStructureFailureClassifier(),
@@ -191,10 +208,13 @@ class SubsidiaryPipeline(Pipeline):
                 filing_dates += overflow.get("filingDate", [])
 
             except KeyError:
-                self.logger.error("Overflow file not found: %s", overflow_filename)
-                self.stats.increment("failed_filings")
-                self.failure_registry.add(
-                    (cik, overflow_filename), failure_type=FailureType.NO_OVERFLOW_FILINGS
+                self._record_failure(
+                    (cik, overflow_filename),
+                    FailureType.NO_OVERFLOW_FILINGS,
+                    "error",
+                    "Overflow file not found: %s",
+                    overflow_filename,
+                    stat_keys=("failed_filings",),
                 )
 
         return forms, accession_numbers, primary_documents, filing_dates
@@ -239,15 +259,25 @@ class SubsidiaryPipeline(Pipeline):
             len({len(forms), len(accession_numbers), len(primary_documents), len(filing_dates)})
             != 1
         ):
-            self.logger.error("Filename: %s has forms with mismatched data lengths.", filename)
-            self.stats.increment("failed_filings")
-            self.failure_registry.add((cik, filename), failure_type=FailureType.MISMATCHED_LENGTHS)
+            self._record_failure(
+                (cik, filename),
+                FailureType.MISMATCHED_LENGTHS,
+                "error",
+                "Filename: %s has forms with mismatched data lengths.",
+                filename,
+                stat_keys=("failed_filings",),
+            )
             return None
 
         if not any([forms, accession_numbers, primary_documents, filing_dates]):
-            self.logger.debug("Filename: %s has forms without data.", filename)
-            self.stats.increment("failed_filings")
-            self.failure_registry.add((cik, filename), failure_type=FailureType.NO_FORM_DATA)
+            self._record_failure(
+                (cik, filename),
+                FailureType.NO_FORM_DATA,
+                "debug",
+                "Filename: %s has forms without data.",
+                filename,
+                stat_keys=("failed_filings",),
+            )
             return None
 
         return zip(forms, accession_numbers, primary_documents, filing_dates)
@@ -316,7 +346,10 @@ class SubsidiaryPipeline(Pipeline):
         accession = accession_number.replace("-", "")
         directory = f"{self.sec_client.SEC_URL}/{company_data['cik']}/{accession}/index.json"
 
-        if primary_document != "" and primary_document.split(".")[-1].upper() in ("HTM", "HTML"):
+        if (
+            primary_document != ""
+            and primary_document.split(".")[-1].upper() in SUPPORTED_EXHIBIT_EXTENSIONS
+        ):
             primary = (
                 f"{self.sec_client.SEC_URL}/{company_data['cik']}/{accession}/{primary_document}"
             )
@@ -381,6 +414,42 @@ class SubsidiaryPipeline(Pipeline):
 
         return filings
 
+    def _filter_already_processed(self, filings: list[Filing]) -> list[Filing]:
+        """Drop filings already represented in the output parquet.
+
+        Reads the existing output parquet and removes any filing whose
+        ``(parent_cik, accession_number)`` key is already present. Returns
+        ``filings`` unchanged if no parquet exists yet.
+
+        Args:
+            filings: Filings returned by `load_input`.
+
+        Returns:
+            Filings that still need to be processed.
+        """
+        try:
+            existing_df = pd.read_parquet(self.config.output_file)
+        except FileNotFoundError:
+            return filings
+
+        if "parent_cik" not in existing_df.columns or "accession_number" not in existing_df.columns:
+            return filings
+
+        existing_keys = set(zip(existing_df["parent_cik"], existing_df["accession_number"]))
+        unprocessed = [
+            f
+            for f in filings
+            if (f.cik, f.accession_number) not in existing_keys
+            and (f.cik, f.filename) not in self.failure_registry
+        ]
+        self.logger.info(
+            "Filter: %d filings loaded, %d skipped as already processed, %d remaining",
+            len(filings),
+            len(filings) - len(unprocessed),
+            len(unprocessed),
+        )
+        return unprocessed
+
     def load_input(self) -> list[Filing]:
         """Load input data from the SEC and return a list of filings.
 
@@ -388,7 +457,7 @@ class SubsidiaryPipeline(Pipeline):
             A list of Filing objects
         """
         filings = []
-        with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
+        with open_zip(self.config.input_file, headers=self.sec_client.sec_headers) as zf:
             namelist = zf.namelist()
             if self._INPUT_SAMPLE_SIZE:
                 namelist = namelist[: self._INPUT_SAMPLE_SIZE]
@@ -400,13 +469,75 @@ class SubsidiaryPipeline(Pipeline):
                     filings.extend(filings_for_file)
 
         self.logger.info(
-            "Located %d filings for %d files",
+            "Located %d filings for %d forms",
             len(filings),
             len(namelist) - self.stats.skipped_filings,
         )
         self.logger.info("Skipped %d files", self.stats.skipped_filings)
 
-        return filings
+        return self._filter_already_processed(filings)
+
+    def _record_failure(
+        self,
+        key: tuple[str, str],
+        failure_type: FailureType,
+        log_level: str,
+        message: str,
+        *log_args: object,
+        stat_keys: tuple[str, ...] = ("failed_subsidiaries",),
+    ) -> None:
+        """Log a failure, increment stats, and register it in the failure registry.
+
+        Args:
+            key: Registry key tuple, typically ``(cik, filename)``.
+            failure_type: Classified failure type.
+            log_level: Logger method name (``"warning"`` or ``"error"``).
+            message: ``%s``-style log message.
+            *log_args: Arguments to substitute into ``message``.
+            stat_keys: Stat field names to increment (default: ``("failed_subsidiaries",)``).
+        """
+        getattr(self.logger, log_level)(message, *log_args)
+        for key_ in stat_keys:
+            self.stats.increment(key_)
+        self.failure_registry.add(key, failure_type)
+
+    def _report_extraction(
+        self,
+        num_chunks: int,
+        ungrounded_name: int,
+        ungrounded_location: int,
+        num_subsidiaries: int,
+        filing: Filing,
+    ) -> None:
+        """Track stats on extraction operations.
+
+        Args:
+            num_chunks: The number of chunks and exhibit may be split up in
+            ungrounded_name: The number of instances where name check failed
+            ungrounded_location: The number of instances where location check failed
+            num_subsidiaries: The number of subsidiaries extracted
+            filing: The Filing object the subsidiaries were extracted for
+        """
+        if num_chunks > 1:
+            self.stats.increment("chunked_extractions")
+
+        if ungrounded_name:
+            self.stats.increment("ungrounded_name", ungrounded_name)
+
+        if ungrounded_location:
+            self.stats.increment("ungrounded_location", ungrounded_location)
+
+        if num_subsidiaries == 0:
+            self._record_failure(
+                (filing.cik, filing.filename),
+                FailureType.NO_SUBSIDIARIES,
+                "warning",
+                "No subsidiaries found for filing: %s - %s - %s",
+                filing.cik,
+                filing.accession_number,
+                filing.filing_date,
+                stat_keys=("zero_subsidiaries",),
+            )
 
     def _extract_worker(self, work_queue: queue.Queue, results_queue: queue.Queue) -> None:
         """Worker thread that extracts subsidiaries from queued exhibit documents.
@@ -428,30 +559,64 @@ class SubsidiaryPipeline(Pipeline):
         while True:
             filing, exhibit_contents = work_queue.get()
             try:
-                subsidiaries = self.extractor.extract(filing, exhibit_contents)
+                subsidiaries, ungrounded_name, ungrounded_location, num_chunks = (
+                    self.extractor.extract(filing, exhibit_contents)
+                )
+                self._report_extraction(
+                    num_chunks=num_chunks,
+                    ungrounded_name=ungrounded_name,
+                    ungrounded_location=ungrounded_location,
+                    num_subsidiaries=len(subsidiaries),
+                    filing=filing,
+                )
                 results_queue.put(subsidiaries)
 
             except DocumentError as e:
-                self.logger.error(
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.DOCUMENT_ERROR,
+                    "error",
                     "Document error for filing: %s - %s - %s: %s",
                     filing.cik,
                     filing.accession_number,
                     filing.filing_date,
                     e,
                 )
-                self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add((filing.cik, filing.filename), FailureType.DOCUMENT_ERROR)
 
-            except Exception as _:
-                self.logger.error(
+            except ExtractionTimeoutError:
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.TIMEOUT_ERROR,
+                    "error",
+                    "Timeout extracting subsidiaries from filing: %s - %s - %s",
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
+                    stat_keys=("failed_subsidiaries", "timeout_subsidiaries"),
+                )
+
+            except ExtractionTruncatedError as e:
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.TRUNCATED_ERROR,
+                    "error",
+                    "Truncated extraction for filing: %s - %s - %s: %s",
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
+                    e,
+                    stat_keys=("failed_subsidiaries", "truncated_extractions"),
+                )
+
+            except Exception:
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.EXTRACTION_FAILED,
+                    "error",
                     "Error extracting subsidiaries from filing: %s - %s - %s",
                     filing.cik,
                     filing.accession_number,
                     filing.filing_date,
-                )
-                self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(
-                    (filing.cik, filing.filename), FailureType.EXTRACTION_FAILED
                 )
 
             finally:
@@ -501,18 +666,16 @@ class SubsidiaryPipeline(Pipeline):
         """
         directory_response = self.sec_client.query_endpoint(filing.directory)
         if "directory" not in directory_response.get("data", {}).keys():
-            self.logger.error(
+            self._record_failure(
+                (filing.cik, filing.filename),
+                FailureType.NO_FILING_DIRECTORY,
+                "error",
                 "Filing: %s - %s - %s does not have a directory listing.",
                 filing.cik,
                 filing.accession_number,
                 filing.filing_date,
             )
-            self.stats.increment("failed_subsidiaries")
-            self.failure_registry.add(
-                (filing.cik, filing.filename), FailureType.NO_FILING_DIRECTORY
-            )
             return []
-        self.sec_client.rate_limit()
         return directory_response.get("data", {}).get("directory", {}).get("item", [])
 
     def _fetch_pdf_content(self, filing: Filing, item: dict, sec_url: str) -> dict:
@@ -535,15 +698,48 @@ class SubsidiaryPipeline(Pipeline):
                     text = "\n\n".join(page.extract_text() or "" for page in pdf.pages)
                 exhibit_content = {"url": sec_url, "data": text}
             except Exception:
-                self.logger.error("Failed to extract PDF content: %s", sec_url)
-                self.stats.increment("failed_subsidiaries")
-                self.failure_registry.add(
-                    (filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.NO_EXHIBIT_CONTENT,
+                    "error",
+                    "Failed to extract PDF content: %s",
+                    sec_url,
                 )
         return exhibit_content
 
+    def _fetch_html_content(self, name: str, filing: Filing, sec_url: str) -> dict:
+        """Fetch HTM/HTML content from the SEC and convert it to plain text.
+
+        Mirrors ``_fetch_pdf_content``: fetches the document and pre-processes
+        it (HTML → text) so the extractor works on the same string it hands to
+        the model and uses for grounding.
+
+        Args:
+            name: Name of the item
+            filing: Filing object to fetch HTML content from
+            sec_url: URL of the HTML file
+
+        Returns:
+            Dict with ``"url"`` and ``"data"`` (plain text) keys.
+        """
+        item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_json=False)
+        if item_response.get("data"):
+            exhibit_content = {"url": sec_url, "data": html_to_text(item_response["data"])}
+        else:
+            exhibit_content = {}
+            self._record_failure(
+                (filing.cik, filing.filename),
+                FailureType.NO_EXHIBIT_CONTENT,
+                "error",
+                "Exhibit %s - %s - %s does not have content.",
+                name,
+                filing.cik,
+                filing.accession_number,
+            )
+        return exhibit_content
+
     def _fetch_other_content(self, name: str, filing: Filing, sec_url: str) -> dict:
-        """Fetch other content from the SEC including HTM, HTML, and TXT files.
+        """Fetch plain-text exhibit content from the SEC.
 
         Args:
             name: Name of the item
@@ -558,14 +754,15 @@ class SubsidiaryPipeline(Pipeline):
             exhibit_content = {"url": sec_url, "data": item_response["data"]}
         else:
             exhibit_content = {}
-            self.logger.error(
+            self._record_failure(
+                (filing.cik, filing.filename),
+                FailureType.NO_EXHIBIT_CONTENT,
+                "error",
                 "Exhibit %s - %s - %s does not have content.",
                 name,
                 filing.cik,
                 filing.accession_number,
             )
-            self.stats.increment("failed_subsidiaries")
-            self.failure_registry.add((filing.cik, filing.filename), FailureType.NO_EXHIBIT_CONTENT)
         return exhibit_content
 
     def _fetch_exhibit_content(self, filing: Filing, item: dict) -> dict:
@@ -596,17 +793,19 @@ class SubsidiaryPipeline(Pipeline):
             return {}
 
         ext = item["name"].rsplit(".", 1)[-1].upper() if "." in item["name"] else ""
-        if ext not in self._SUPPORTED_EXHIBIT_EXTENSIONS:
+        if ext not in SUPPORTED_EXHIBIT_EXTENSIONS:
             self.logger.warning("Unsupported exhibit extension: %s", ext)
             return {}
 
         sec_url = f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
+        self.stats.increment(f"{ext.lower()}_exhibits")
         if ext == "PDF":
             exhibit_content = self._fetch_pdf_content(filing, item, sec_url)
+        elif ext in ("HTM", "HTML"):
+            exhibit_content = self._fetch_html_content(name, filing, sec_url)
         else:
             exhibit_content = self._fetch_other_content(name, filing, sec_url)
 
-        self.sec_client.rate_limit()
         return exhibit_content
 
     def _fetch_exhibit(self, filing: Filing) -> list[dict]:
@@ -641,7 +840,7 @@ class SubsidiaryPipeline(Pipeline):
             Deduplicated list of :class:`Subsidiary` objects extracted across all
             filings.
         """
-        self.logger.info("Located %d subsidiaries", len(input_list))
+        self.logger.info("Located %d filings with exhibits to process", len(input_list))
         # Queues to store exhibit data and subsidiary data
         work_queue = queue.Queue(maxsize=self.config.num_workers * 2)
         result_queue = queue.Queue()
@@ -677,6 +876,10 @@ class SubsidiaryPipeline(Pipeline):
             # SEC operations to fetch exhibit data — one task per document
             for filing in input_list:
                 exhibit_contents = self._fetch_exhibit(filing)
+                if not exhibit_contents:
+                    self.failure_registry.add(
+                        (filing.cik, filing.filename), FailureType.NO_EXHIBIT_FOUND
+                    )
                 for exhibit_content in exhibit_contents:
                     work_queue.put((filing, exhibit_content))
                     extract_bar.total += 1
@@ -692,8 +895,9 @@ class SubsidiaryPipeline(Pipeline):
     def save_output(self, processed_list: list[Subsidiary]) -> None:
         """Deduplicate and persist extracted subsidiaries as a Parquet file.
 
-        Drops duplicate rows keyed on ``(parent_cik, accession_number, name)`` and
-        appends a UTC ``date_added`` timestamp column before writing.
+        Merges new rows with any existing parquet, drops duplicates keyed on
+        ``(parent_cik, accession_number, name)``, and stamps a UTC ``date_added``
+        column before writing.
 
         Args:
             processed_list: List of :class:`Subsidiary` objects returned by
@@ -702,14 +906,52 @@ class SubsidiaryPipeline(Pipeline):
         Returns:
             None
         """
+        # Save processed subsidiaries to a DataFrame
         subsidiaries_df = pd.DataFrame([dataclasses.asdict(s) for s in processed_list])
-        subsidiaries_df = subsidiaries_df.drop_duplicates(
+
+        try:
+            existing_subsidiaries_df = pd.read_parquet(self.config.output_file)
+
+            # Merge the existing subsidiaries with the new subsidiaries
+            self.logger.info(
+                "Merging existing %d subsidiaries with %d new subsidiaries",
+                len(existing_subsidiaries_df),
+                len(subsidiaries_df),
+            )
+            combined_subsidiaries_df = pd.concat(
+                [existing_subsidiaries_df, subsidiaries_df], ignore_index=True
+            )
+
+        except FileNotFoundError:
+            self.logger.info("No existing subsidiaries found, creating new file")
+            combined_subsidiaries_df = subsidiaries_df
+
+        # Canonicalize jurisdiction strings so the same place yields the same
+        # value across filings. Applied to merged historic + new rows so that
+        # alias-dict updates retroactively normalize older data on next write.
+        combined_subsidiaries_df["location"] = (
+            combined_subsidiaries_df["location"].fillna("").map(normalize_subsidiary_location)
+        )
+        combined_subsidiaries_df["parent_location"] = (
+            combined_subsidiaries_df["parent_location"].fillna("").map(normalize_parent_location)
+        )
+
+        # Drop duplicate rows keyed on (parent_cik, accession_number, name)
+        combined_subsidiaries_df = combined_subsidiaries_df.drop_duplicates(
             subset=["parent_cik", "accession_number", "name"]
         )
-        subsidiaries_df["date_added"] = datetime.datetime.now(datetime.UTC).isoformat()
-        subsidiaries_df.to_parquet(self.config.output_file)
+
+        # Add a date_added column if it doesn't exist and set the value to the current UTC timestamp
+        if "date_added" not in combined_subsidiaries_df.columns:
+            combined_subsidiaries_df["date_added"] = pd.NA
+        combined_subsidiaries_df.loc[
+            combined_subsidiaries_df["date_added"].isna(), "date_added"
+        ] = datetime.datetime.now(datetime.UTC).isoformat()
+
+        # Save the combined subsidiaries to the output file
+        combined_subsidiaries_df.to_parquet(self.config.output_file)
         self.logger.info(
-            "Saved %d subsidiaries to %s", len(subsidiaries_df), self.config.output_file
+            "Saved %d subsidiaries to %s", len(combined_subsidiaries_df), self.config.output_file
         )
 
     def display_stats(self) -> None:
@@ -731,6 +973,18 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("  Subsidiaries")
         self.logger.info("    Total:    %d", self.stats.total_subsidiaries)
         self.logger.info("    Failed:   %d", self.stats.failed_subsidiaries)
+        self.logger.info("    Timeouts: %d", self.stats.timeout_subsidiaries)
+        self.logger.info("    Truncated: %d", self.stats.truncated_extractions)
+        self.logger.info("    Chunked:   %d", self.stats.chunked_extractions)
+        self.logger.info("    Zero:     %d", self.stats.zero_subsidiaries)
+        self.logger.info("    Ungrounded name:     %d", self.stats.ungrounded_name)
+        self.logger.info("    Ungrounded location: %d", self.stats.ungrounded_location)
+        self.logger.info("    Dropped:             %d", self.stats.dropped_subsidiaries)
+        self.logger.info("  Exhibits by type")
+        self.logger.info("    HTM:  %d", self.stats.htm_exhibits)
+        self.logger.info("    HTML: %d", self.stats.html_exhibits)
+        self.logger.info("    TXT:  %d", self.stats.txt_exhibits)
+        self.logger.info("    PDF:  %d", self.stats.pdf_exhibits)
         self.logger.info("=" * 40)
 
     def run(self) -> None:

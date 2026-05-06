@@ -9,7 +9,10 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 
-from idi_corporate_structure.processor.extractor import _html_to_text as html_to_text
+from idi_corporate_structure.processor.extractor import (
+    ExtractionTruncatedError,
+    html_to_text,
+)
 from idi_corporate_structure.processor.failures import FailureType
 from idi_corporate_structure.processor.types import Filing, Subsidiary
 from tests.conftest import make_cik_json, make_directory_response, make_exhibit_response
@@ -639,7 +642,7 @@ class TestProcess:
 
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=exhibit_content)
         pipeline.extractor.extract.side_effect = [
-            ([self._make_subsidiary(f.cik)], 0, 0) for f in filings
+            ([self._make_subsidiary(f.cik)], 0, 0, 1) for f in filings
         ]
 
         results = pipeline.process(filings)
@@ -668,8 +671,8 @@ class TestProcess:
         subsidiary = self._make_subsidiary("CIK0000000000")
         pipeline.extractor.extract.side_effect = [
             RuntimeError("GPT error"),
-            ([subsidiary], 0, 0),
-            ([subsidiary], 0, 0),
+            ([subsidiary], 0, 0, 1),
+            ([subsidiary], 0, 0, 1),
         ]
 
         results = pipeline.process(filings)
@@ -685,6 +688,7 @@ class TestProcess:
             [self._make_subsidiary("CIK0000000000"), self._make_subsidiary("CIK0000000000")],
             0,
             0,
+            1,
         )
 
         pipeline.process(filings)
@@ -726,7 +730,7 @@ class TestExtractWorker:
             accession_number=sample_filing.accession_number,
             exhibit_url="",
         )
-        pipeline.extractor.extract.return_value = ([subsidiary], 0, 0)
+        pipeline.extractor.extract.return_value = ([subsidiary], 0, 0, 1)
 
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
@@ -775,6 +779,46 @@ class TestExtractWorker:
 
         spy.assert_called_once_with(
             (sample_filing.cik, sample_filing.filename), FailureType.EXTRACTION_FAILED
+        )
+
+    def test_chunked_extraction_increments_stat(self, pipeline, sample_filing):
+        pipeline.extractor.extract.return_value = ([], 0, 0, 5)  # 5 chunks
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, make_exhibit_response()))
+        work_queue.join()
+
+        assert pipeline.stats.chunked_extractions == 1
+
+    def test_one_shot_does_not_increment_chunked(self, pipeline, sample_filing):
+        pipeline.extractor.extract.return_value = ([], 0, 0, 1)  # single chunk
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, make_exhibit_response()))
+        work_queue.join()
+
+        assert pipeline.stats.chunked_extractions == 0
+
+    def test_truncated_extraction_increments_truncated_and_failed(
+        self, pipeline, sample_filing, mocker
+    ):
+        pipeline.extractor.extract.side_effect = ExtractionTruncatedError("output cut off")
+        spy = mocker.spy(pipeline.failure_registry, "add")
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, make_exhibit_response()))
+        work_queue.join()
+
+        assert pipeline.stats.truncated_extractions == 1
+        assert pipeline.stats.failed_subsidiaries == 1
+        spy.assert_called_once_with(
+            (sample_filing.cik, sample_filing.filename), FailureType.TRUNCATED_ERROR
         )
 
 
@@ -908,6 +952,57 @@ class TestSaveOutput:
 
         result_df = pd.read_parquet(pipeline.config.output_file)
         assert len(result_df) == 2
+
+    def test_normalizes_location_strings_on_write(self, pipeline):
+        """Footnote markers, sentinels, and country aliases should be canonicalized."""
+        subs = [
+            Subsidiary(
+                parent_cik="0000000001",
+                parent_name="ACME",
+                parent_location="DE",
+                name="Acme China Sub",
+                location="PRC",
+                filing_date="2024-01-01",
+                form_type="10-K",
+                exhibit_type="21",
+                accession_number="0000000001-24-000001",
+                exhibit_url="https://example.com/ex21.htm",
+            ),
+            Subsidiary(
+                parent_cik="0000000001",
+                parent_name="ACME",
+                parent_location="E9",
+                name="Acme Mexico Sub",
+                location="Mexico(2)",
+                filing_date="2024-01-01",
+                form_type="10-K",
+                exhibit_type="21",
+                accession_number="0000000001-24-000001",
+                exhibit_url="https://example.com/ex21.htm",
+            ),
+            Subsidiary(
+                parent_cik="0000000001",
+                parent_name="ACME",
+                parent_location="L2",
+                name="Acme Mystery Sub",
+                location="Unknown",
+                filing_date="2024-01-01",
+                form_type="10-K",
+                exhibit_type="21",
+                accession_number="0000000001-24-000001",
+                exhibit_url="https://example.com/ex21.htm",
+            ),
+        ]
+
+        pipeline.save_output(subs)
+
+        result_df = pd.read_parquet(pipeline.config.output_file).set_index("name")
+        assert result_df.loc["Acme China Sub", "location"] == "China"
+        assert result_df.loc["Acme China Sub", "parent_location"] == "Delaware"
+        assert result_df.loc["Acme Mexico Sub", "location"] == "Mexico"
+        assert result_df.loc["Acme Mexico Sub", "parent_location"] == "Cayman Islands"
+        assert result_df.loc["Acme Mystery Sub", "location"] == ""
+        assert result_df.loc["Acme Mystery Sub", "parent_location"] == "Ireland"
 
 
 # ── display_stats ─────────────────────────────────────────────────────────────

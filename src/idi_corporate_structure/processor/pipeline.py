@@ -25,12 +25,17 @@ from idi_corporate_structure.common.storage import open_zip
 from idi_corporate_structure.processor.extractor import (
     DocumentError,
     ExtractionTimeoutError,
+    ExtractionTruncatedError,
     GptExtractor,
-    _html_to_text,
+    html_to_text,
 )
 from idi_corporate_structure.processor.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
+)
+from idi_corporate_structure.processor.normalization import (
+    normalize_parent_location,
+    normalize_subsidiary_location,
 )
 from idi_corporate_structure.processor.types import (
     SUPPORTED_EXHIBIT_EXTENSIONS,
@@ -452,7 +457,7 @@ class SubsidiaryPipeline(Pipeline):
             A list of Filing objects
         """
         filings = []
-        with open_zip(self.config.input_file, headers=self.sec_client.SEC_HEADERS) as zf:
+        with open_zip(self.config.input_file, headers=self.sec_client.sec_headers) as zf:
             namelist = zf.namelist()
             if self._INPUT_SAMPLE_SIZE:
                 namelist = namelist[: self._INPUT_SAMPLE_SIZE]
@@ -496,6 +501,44 @@ class SubsidiaryPipeline(Pipeline):
             self.stats.increment(key_)
         self.failure_registry.add(key, failure_type)
 
+    def _report_extraction(
+        self,
+        num_chunks: int,
+        ungrounded_name: int,
+        ungrounded_location: int,
+        num_subsidiaries: int,
+        filing: Filing,
+    ) -> None:
+        """Track stats on extraction operations.
+
+        Args:
+            num_chunks: The number of chunks and exhibit may be split up in
+            ungrounded_name: The number of instances where name check failed
+            ungrounded_location: The number of instances where location check failed
+            num_subsidiaries: The number of subsidiaries extracted
+            filing: The Filing object the subsidiaries were extracted for
+        """
+        if num_chunks > 1:
+            self.stats.increment("chunked_extractions")
+
+        if ungrounded_name:
+            self.stats.increment("ungrounded_name", ungrounded_name)
+
+        if ungrounded_location:
+            self.stats.increment("ungrounded_location", ungrounded_location)
+
+        if num_subsidiaries == 0:
+            self._record_failure(
+                (filing.cik, filing.filename),
+                FailureType.NO_SUBSIDIARIES,
+                "warning",
+                "No subsidiaries found for filing: %s - %s - %s",
+                filing.cik,
+                filing.accession_number,
+                filing.filing_date,
+                stat_keys=("zero_subsidiaries",),
+            )
+
     def _extract_worker(self, work_queue: queue.Queue, results_queue: queue.Queue) -> None:
         """Worker thread that extracts subsidiaries from queued exhibit documents.
 
@@ -516,28 +559,16 @@ class SubsidiaryPipeline(Pipeline):
         while True:
             filing, exhibit_contents = work_queue.get()
             try:
-                subsidiaries, ungrounded_name, ungrounded_location = self.extractor.extract(
-                    filing, exhibit_contents
+                subsidiaries, ungrounded_name, ungrounded_location, num_chunks = (
+                    self.extractor.extract(filing, exhibit_contents)
                 )
-
-                if ungrounded_name:
-                    self.stats.increment("ungrounded_name", ungrounded_name)
-
-                if ungrounded_location:
-                    self.stats.increment("ungrounded_location", ungrounded_location)
-
-                if len(subsidiaries) == 0:
-                    self._record_failure(
-                        (filing.cik, filing.filename),
-                        FailureType.NO_SUBSIDIARIES,
-                        "warning",
-                        "No subsidiaries found for filing: %s - %s - %s",
-                        filing.cik,
-                        filing.accession_number,
-                        filing.filing_date,
-                        stat_keys=("zero_subsidiaries",),
-                    )
-
+                self._report_extraction(
+                    num_chunks=num_chunks,
+                    ungrounded_name=ungrounded_name,
+                    ungrounded_location=ungrounded_location,
+                    num_subsidiaries=len(subsidiaries),
+                    filing=filing,
+                )
                 results_queue.put(subsidiaries)
 
             except DocumentError as e:
@@ -562,6 +593,19 @@ class SubsidiaryPipeline(Pipeline):
                     filing.accession_number,
                     filing.filing_date,
                     stat_keys=("failed_subsidiaries", "timeout_subsidiaries"),
+                )
+
+            except ExtractionTruncatedError as e:
+                self._record_failure(
+                    (filing.cik, filing.filename),
+                    FailureType.TRUNCATED_ERROR,
+                    "error",
+                    "Truncated extraction for filing: %s - %s - %s: %s",
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
+                    e,
+                    stat_keys=("failed_subsidiaries", "truncated_extractions"),
                 )
 
             except Exception:
@@ -680,7 +724,7 @@ class SubsidiaryPipeline(Pipeline):
         """
         item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_json=False)
         if item_response.get("data"):
-            exhibit_content = {"url": sec_url, "data": _html_to_text(item_response["data"])}
+            exhibit_content = {"url": sec_url, "data": html_to_text(item_response["data"])}
         else:
             exhibit_content = {}
             self._record_failure(
@@ -882,6 +926,16 @@ class SubsidiaryPipeline(Pipeline):
             self.logger.info("No existing subsidiaries found, creating new file")
             combined_subsidiaries_df = subsidiaries_df
 
+        # Canonicalize jurisdiction strings so the same place yields the same
+        # value across filings. Applied to merged historic + new rows so that
+        # alias-dict updates retroactively normalize older data on next write.
+        combined_subsidiaries_df["location"] = (
+            combined_subsidiaries_df["location"].fillna("").map(normalize_subsidiary_location)
+        )
+        combined_subsidiaries_df["parent_location"] = (
+            combined_subsidiaries_df["parent_location"].fillna("").map(normalize_parent_location)
+        )
+
         # Drop duplicate rows keyed on (parent_cik, accession_number, name)
         combined_subsidiaries_df = combined_subsidiaries_df.drop_duplicates(
             subset=["parent_cik", "accession_number", "name"]
@@ -920,6 +974,8 @@ class SubsidiaryPipeline(Pipeline):
         self.logger.info("    Total:    %d", self.stats.total_subsidiaries)
         self.logger.info("    Failed:   %d", self.stats.failed_subsidiaries)
         self.logger.info("    Timeouts: %d", self.stats.timeout_subsidiaries)
+        self.logger.info("    Truncated: %d", self.stats.truncated_extractions)
+        self.logger.info("    Chunked:   %d", self.stats.chunked_extractions)
         self.logger.info("    Zero:     %d", self.stats.zero_subsidiaries)
         self.logger.info("    Ungrounded name:     %d", self.stats.ungrounded_name)
         self.logger.info("    Ungrounded location: %d", self.stats.ungrounded_location)

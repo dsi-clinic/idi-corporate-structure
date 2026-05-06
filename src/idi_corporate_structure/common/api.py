@@ -343,16 +343,22 @@ class GeonamesApi(ApiClient):
 class SecClient(ApiClient):
     """API client for the SEC EDGAR archive, with built-in rate limiting."""
 
-    SEC_HEADERS = {"User-Agent": "Nicole Tebaldi ntebaldi@uchicago.edu"}
     SEC_URL = "https://www.sec.gov/Archives/edgar/data"
 
-    def __init__(self, rate_limit: float = 0.2) -> None:
+    def __init__(self, rate_limit: float = 0.2, user_agent: str = "") -> None:
         """Initializes the SEC API.
 
         Args:
-            rate_limit: How long to wait in between requests
+            rate_limit: How long to wait in between requests.
+            user_agent: Value for the SEC-required ``User-Agent`` header.
         """
         super().__init__(rate_limit=rate_limit)
+        self._sec_headers = {"User-Agent": user_agent}
+
+    @property
+    def sec_headers(self) -> dict:
+        """Return the SEC header for querying."""
+        return self._sec_headers
 
     def query_endpoint(
         self, sec_url: str, return_json: bool = True, return_bytes: bool = False
@@ -370,7 +376,7 @@ class SecClient(ApiClient):
         """
         return self._query_with_error_handling(
             url=sec_url,
-            headers=self.SEC_HEADERS,
+            headers=self._sec_headers,
             method="get",
             return_json=return_json,
             return_bytes=return_bytes,

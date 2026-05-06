@@ -90,6 +90,10 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
     if name in _configured_loggers:
         return logging.getLogger(name)
 
+    env_level = os.environ.get("LOG_LEVEL", "").upper()
+    if env_level and hasattr(logging, env_level):
+        level = getattr(logging, env_level)
+
     # Create logger and set level
     logger = logging.getLogger(name)
     logger.setLevel(level)

@@ -39,6 +39,14 @@ _CELL_TAGS = frozenset({"td", "th"})
 _INLINE_WS_RE = re.compile(r"[ \t\f\v]+")
 _MULTINEWLINE_RE = re.compile(r"\n{3,}")
 
+_CHUNK_THRESHOLD_CHARS = 4_000
+_CHUNK_MAX_CHARS = 4_000  # protects the model's input window
+_CHUNK_MAX_ENTRIES = 75  # protects against per-chunk laziness
+_CHUNK_OVERLAP_CHARS = 400
+
+_INVISIBLE_CHARS_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
+_PUNCT_RE = re.compile(r"[^\w]+")
+
 
 class DocumentError(Exception):
     """Exception raised for document-specific errors."""
@@ -48,6 +56,12 @@ class DocumentError(Exception):
 
 class ExtractionTimeoutError(RuntimeError):
     """Exception raised when the OpenAI API times out during extraction."""
+
+    pass
+
+
+class ExtractionTruncatedError(RuntimeError):
+    """Raised when the model's extraction response was cut off by the output token limit."""
 
     pass
 
@@ -74,14 +88,112 @@ class GptExtractor(Extractor):
     """Extracts subsidiaries from a single exhibit document using GPT."""
 
     _DOCUMENT_ERROR_STATUS_CODE = 400
+    _MAX_COMPLETION_TOKENS = 32768  # surfaces finish_reason="length" when truncation occurs
+    _DEFAULT_MODEL = "gpt-4.1-nano"
+    _LOW_YIELD_RATIO = 0.6  # per-chunk yield (output rows / input rows)
     _SYSTEM_PROMPT: str = (
         _PROMPTS.joinpath("gpt_extractor_system.txt").read_text(encoding="utf-8").strip()
     )
 
-    def __init__(self, openai_api_key: str) -> None:
-        """Initialize the GPT extractor with the OpenAI API key."""
+    def __init__(self, openai_api_key: str, model: str = "") -> None:
+        """Initialize the GPT extractor with the OpenAI API key.
+
+        Args:
+            openai_api_key: OpenAI API key.
+            model: OpenAI model ID to use for extraction.  Defaults to
+                ``_DEFAULT_MODEL`` when omitted or empty.
+        """
         self._openai_client = OpenAiClient(api_key=openai_api_key)
+        self._model = model or self._DEFAULT_MODEL
         self._logger = get_logger(__name__)
+
+    def _extract_with_chunking(self, doc_text: str, company_name: str) -> tuple[list[dict], int]:
+        """Run extraction one-shot, falling back to chunked extraction if needed.
+
+        Two triggers cause chunking:
+          * Preemptive: ``len(doc_text) > _CHUNK_THRESHOLD_CHARS`` (catches the
+            ``finish_reason="stop"`` laziness case where the model gives up
+            mid-extraction without surfacing as truncation).
+          * Reactive: a one-shot call hits the explicit output cap and raises
+            :class:`ExtractionTruncatedError`.
+
+        Args:
+            doc_text: Full plain-text exhibit content.
+            company_name: String name of the filing company
+
+        Returns:
+            Tuple of (raw subsidiary dicts from the model, num chunks used).
+            ``num_chunks == 1`` means no chunking was performed.
+        """
+        if len(doc_text) > _CHUNK_THRESHOLD_CHARS:
+            return self._summarize_chunks(doc_text, company_name)
+
+        try:
+            return self._summarize(doc_text).get("subsidiaries", []), 1
+        except ExtractionTruncatedError:
+            self._logger.info("One-shot extraction truncated; retrying with chunking")
+            return self._summarize_chunks(doc_text, company_name)
+
+    def _log_chunk(
+        self, chunk: str, chunk_subs: list[dict], company_name: str, i: int, num_chunks: int
+    ) -> None:
+        """Log the chunking process.
+
+        Args:
+            chunk: The chunk of text to log.
+            chunk_subs: The subsidiaries returned by the model for the chunk.
+            company_name: The name of the filing company.
+            i: The index of the chunk.
+            num_chunks: The number of chunks.
+        """
+        input_rows = chunk.count("\n\n") + 1
+        output_rows = len(chunk_subs)
+        yield_ratio = output_rows / input_rows if input_rows else 0.0
+        log = self._logger.warning if yield_ratio < self._LOW_YIELD_RATIO else self._logger.info
+        log(
+            "%s chunk %d/%d: %d input rows → %d extracted (yield=%.2f)",
+            company_name,
+            i,
+            num_chunks,
+            input_rows,
+            output_rows,
+            yield_ratio,
+        )
+
+    def _summarize_chunks(self, doc_text: str, company_name: str) -> tuple[list[dict], int]:
+        """Chunk ``doc_text`` and run a separate summarize call per chunk.
+
+        Args:
+            doc_text: Full plain-text exhibit content
+            company_name: String name of the filing company
+
+        Returns:
+            Tuple of (concatenated raw subsidiaries from all chunks, chunk count)
+
+        Raises:
+            ExtractionTruncatedError: If any individual chunk truncates — the
+                chunk-size constants need tuning down.
+        """
+        chunks = _chunk_document(
+            doc_text, _CHUNK_MAX_CHARS, _CHUNK_OVERLAP_CHARS, _CHUNK_MAX_ENTRIES
+        )
+        self._logger.info("%s chunked extraction: %d chunks", company_name, len(chunks))
+
+        all_subs: list[dict] = []
+        for i, chunk in enumerate(chunks, 1):
+            try:
+                result = self._summarize(chunk)
+            except ExtractionTruncatedError:
+                self._logger.error(
+                    "Chunk %d/%d truncated — chunk size may be too large", i, len(chunks)
+                )
+                raise
+
+            chunk_subs = result.get("subsidiaries", [])
+            self._log_chunk(chunk, chunk_subs, company_name, i, len(chunks))
+            all_subs.extend(chunk_subs)
+
+        return all_subs, len(chunks)
 
     def _get_request_data_json(self, document: str) -> dict:
         """Build the OpenAI chat completions request payload for subsidiary extraction.
@@ -99,7 +211,8 @@ class GptExtractor(Extractor):
             ``model``, ``messages``, and ``response_format`` keys.
         """
         return {
-            "model": "gpt-4.1-nano",
+            "model": self._model,
+            "max_completion_tokens": self._MAX_COMPLETION_TOKENS,
             "messages": [
                 {
                     "role": "system",
@@ -150,6 +263,9 @@ class GptExtractor(Extractor):
         Raises:
             DocumentError: If the API returns a 400-level status code, indicating
                 the document itself is malformed or too long.
+            ExtractionTimeoutError: If the API call timed out.
+            ExtractionTruncatedError: If the model response was cut off by the
+                output token limit (``finish_reason == "length"``).
             RuntimeError: If the API returns any other error.
         """
         post_data = self._get_request_data_json(document)
@@ -162,25 +278,24 @@ class GptExtractor(Extractor):
                 raise ExtractionTimeoutError(response["error"])
             raise RuntimeError(response["error"])
 
-        content = response["data"]["choices"][0]["message"]["content"]
+        choice = response["data"]["choices"][0]
+        finish_reason = choice.get("finish_reason")
+        usage = response["data"].get("usage", {})
+        self._logger.debug(
+            "OpenAI extraction input_chars=%d | finish_reason=%s | usage=%s",
+            len(document),
+            finish_reason,
+            usage,
+        )
+
+        if finish_reason == "length":
+            raise ExtractionTruncatedError(
+                f"Model response truncated at output token limit "
+                f"(max_completion_tokens={self._MAX_COMPLETION_TOKENS}, usage={usage})"
+            )
+
+        content = choice["message"]["content"]
         return json.loads(content)
-
-    @staticmethod
-    def _is_name_in_document(name: str, document: str) -> bool:
-        """Check if a name appears in the document (the source of truth).
-
-        Args:
-            name: The name to check.
-            document: The document text to check for the name.
-
-        Returns:
-            True if the normalized name is a substring of the normalized
-            document, False otherwise.
-        """
-        if not name:
-            return False
-
-        return _normalize(name) in _normalize(document)
 
     def _is_location_grounded(
         self, name: str, location: str, doc_text_normalized: str, doc_url: str
@@ -234,7 +349,7 @@ class GptExtractor(Extractor):
 
         for sub in subsidiaries:
             name = sub.get("name", "")
-            if not self._is_name_in_document(name, doc_text):
+            if not _is_name_in_document(name, doc_text):
                 self._logger.warning("Dropped %r from %s (name not in document)", name, doc_url)
                 ungrounded_name += 1
                 continue
@@ -255,12 +370,12 @@ class GptExtractor(Extractor):
 
         return grounded_subsidiaries, ungrounded_name, ungrounded_location
 
-    def extract(self, filing: Filing, document: dict) -> tuple[list[Subsidiary], int, int]:
+    def extract(self, filing: Filing, document: dict) -> tuple[list[Subsidiary], int, int, int]:
         """Extract subsidiaries from an exhibit document using GPT.
 
-        Sends the document text to the OpenAI API and maps each item in the
-        returned ``"subsidiaries"`` list to a :class:`Subsidiary` dataclass,
-        inheriting parent metadata from ``filing``.
+        Sends the document text to the OpenAI API (one-shot or chunked) and maps
+        each returned item to a :class:`Subsidiary` dataclass, inheriting parent
+        metadata from ``filing``.
 
         Args:
             filing: The SEC filing the exhibit belongs to. Provides parent company
@@ -269,19 +384,29 @@ class GptExtractor(Extractor):
                 keys.
 
         Returns:
-            List of :class:`Subsidiary` objects extracted from the document.
+            Tuple of (extracted Subsidiary objects, ungrounded-name count,
+            ungrounded-location count, num chunks used). ``num_chunks > 1``
+            indicates chunked extraction was used.
 
         Raises:
             DocumentError: If GPT rejects the document (e.g. content too long or
                 malformed).
+            ExtractionTruncatedError: If a chunked extraction still truncates
+                (chunk size needs tuning).
             RuntimeError: If the OpenAI API returns any other error.
         """
-        summary = self._summarize(document["data"])
+        # Summarize the subsidiaries in the exhibit
+        raw_subs, num_chunks = self._extract_with_chunking(document["data"], filing.company_name)
 
+        # Dedupe by normalized name
+        deduped = dedup_by_name(raw_subs=raw_subs)
+
+        # Double check the results of the summarize
         grounded_subsidiaries, ungrounded_name, ungrounded_location = (
-            self._locate_grounded_subsidiaries(summary["subsidiaries"], document)
+            self._locate_grounded_subsidiaries(deduped, document)
         )
 
+        # Create subsidiaries
         subsidiaries = [
             Subsidiary(
                 parent_cik=filing.cik,
@@ -292,16 +417,16 @@ class GptExtractor(Extractor):
                 exhibit_type=filing.exhibit_type,
                 accession_number=filing.accession_number,
                 exhibit_url=document["url"],
-                name=_html.unescape(sub["name"]),
+                name=_clean_name(sub["name"]),
                 location=sub.get("location") or "",
                 source_quote=sub.get("source_quote") or "",
             )
             for sub in grounded_subsidiaries
         ]
-        return subsidiaries, ungrounded_name, ungrounded_location
+        return subsidiaries, ungrounded_name, ungrounded_location, num_chunks
 
 
-def _html_to_text(raw_html: str) -> str:
+def html_to_text(raw_html: str) -> str:
     """Convert HTML to plain text, preserving table row/cell boundaries.
 
     Args:
@@ -335,9 +460,195 @@ def _html_to_text(raw_html: str) -> str:
     return collapsed.strip()
 
 
+def _take_overlap(chunk_text: str, overlap_chars: int) -> str:
+    r"""Return the trailing whole paragraphs of ``chunk_text`` fitting in ``overlap_chars``.
+
+    Used to build the overlap region between adjacent chunks. By taking only
+    whole paragraphs, we guarantee the overlap text never bisects an entity row
+    — so the next chunk never begins with a partial name like ``"wer Eight
+    Project LLC"`` that the model would mis-extract as ``"Eight Project LLC"``.
+
+    Always returns at least the final paragraph, even if it exceeds
+    ``overlap_chars``, so the boundary entity is always carried forward.
+
+    Args:
+        chunk_text: The just-emitted chunk's full text.
+        overlap_chars: Soft budget for the overlap region.
+
+    Returns:
+        Joined paragraphs (with ``\n\n`` separators) or empty string when
+        ``overlap_chars <= 0``.
+    """
+    if overlap_chars <= 0:
+        return ""
+
+    paragraphs = chunk_text.split("\n\n")
+    overlap_paras: list[str] = []
+    overlap_len = 0
+
+    for para in reversed(paragraphs):
+        # +2 accounts for the "\n\n" separator we'd add when joining
+        if overlap_paras and overlap_len + len(para) + 2 > overlap_chars:
+            break
+        overlap_paras.insert(0, para)
+        overlap_len += len(para) + 2
+
+    return "\n\n".join(overlap_paras)
+
+
+def _chunk_document(
+    text: str,
+    max_chars: int,
+    overlap_chars: int,
+    max_entries: int | None = None,
+) -> list[str]:
+    """Split text into overlapping chunks capped by character count and entry count.
+
+    A chunk closes when the next paragraph would exceed ``max_chars`` OR the
+    chunk already holds ``max_entries`` paragraphs. The entry cap prevents
+    dense tables from packing too many rows into one chunk, which causes the
+    model to silently drop entries. Each chunk carries ``overlap_chars`` of
+    trailing text from the previous chunk; duplicates are removed by name.
+
+    Args:
+        text: Plain-text exhibit content to chunk.
+        max_chars: Soft maximum characters per chunk.
+        overlap_chars: Trailing characters carried into the next chunk.
+        max_entries: Soft maximum paragraphs per chunk. ``None`` disables it.
+
+    Returns:
+        Ordered list of chunk strings. Returns ``[text]`` if no split needed.
+    """
+    if len(text) <= max_chars and (max_entries is None or text.count("\n\n") + 1 <= max_entries):
+        return [text]
+
+    logger = get_logger(__name__)
+    paragraphs = text.split("\n\n")
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for para in paragraphs:
+        para_len = len(para) + 2  # account for "\n\n" separator
+
+        # Handle oversized paragraphs
+        if para_len > max_chars:
+            if current:
+                chunks.append("\n\n".join(current))
+                current, current_len = [], 0
+            logger.warning(
+                "Paragraph exceeds chunk size (%d > %d chars); emitting as single oversized chunk",
+                len(para),
+                max_chars,
+            )
+            chunks.append(para)
+            continue
+
+        # Handle character and entry caps
+        would_exceed_chars = current_len + para_len > max_chars
+        would_exceed_entries = max_entries is not None and len(current) >= max_entries
+        if (would_exceed_chars or would_exceed_entries) and current:
+            chunks.append("\n\n".join(current))
+            tail = _take_overlap(
+                chunks[-1], overlap_chars
+            )  # carry over overlap from previous chunk
+            current = [tail] if tail else []  # start new chunk with overlap
+            current_len = len(tail)
+
+        current.append(para)  # add current paragraph to current chunk
+        current_len += para_len
+
+    if current:  # add last chunk if not empty
+        chunks.append("\n\n".join(current))
+
+    return chunks
+
+
+def _compact(s: str) -> str:
+    """Aggressive normalization: lowercase + strip all non-alphanumerics.
+
+    Used as a fallback grounding check for names the model returned with
+    minor punctuation or whitespace differences from the exhibit.
+
+    Args:
+        s: String to compact.
+
+    Returns:
+        Lowercased string with all non-word characters removed.
+    """
+    return _PUNCT_RE.sub("", _normalize(s))
+
+
+def _is_name_in_document(name: str, document: str) -> bool:
+    """Check if a name appears in the document (the source of truth).
+
+    Tries a strict normalized substring match first. If that fails, falls
+    back to a compact (punctuation-stripped) match to catch cases where the
+    model returned a name with minor punctuation or whitespace differences
+    from the exhibit (e.g. dropped parentheses, "Health Care" vs
+    "Healthcare").
+
+    Args:
+        name: The name to check.
+        document: The document text to check for the name.
+
+    Returns:
+        True if the name is found via the strict or compact match,
+        False otherwise.
+    """
+    if not name:
+        return False
+
+    if _normalize(name) in _normalize(document):
+        return True
+
+    if _compact(name) in _compact(document):
+        get_logger(__name__).debug(
+            "Name %r matched via compact fallback (model produced a slight variant)", name
+        )
+        return True
+
+    return False
+
+
 def _normalize(s: str) -> str:
     """Decode HTML entities, normalize apostrophes and whitespace, and lowercase."""
     s = _html.unescape(s)
     s = s.replace("\u2019", "'").replace("\u2018", "'")
     s = s.replace("\u201c", '"').replace("\u201d", '"')
     return " ".join(s.split()).lower()
+
+
+def dedup_by_name(raw_subs: list[dict]) -> list[dict]:
+    """Dedupe by normalized name (collisions come from the chunk overlap region)
+
+    Args:
+        raw_subs: List of dictionaries that contain extracted subsidiaries
+
+    Returns:
+        De-duplicated subsidiaries for exhibit
+    """
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for sub in raw_subs:
+        key = _normalize(sub.get("name", ""))
+        # First occurrence wins for location and source_quote
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(sub)
+    return deduped
+
+
+def _clean_name(name: str) -> str:
+    """Clean up subsidiary name.
+
+    Args:
+        name: String extracted for subsidiary name
+
+    Returns:
+        cleaned name string
+    """
+    name = _html.unescape(name)
+    name = _INVISIBLE_CHARS_RE.sub("", name)
+    name = name.replace("\xa0", " ")
+    return " ".join(name.split())

@@ -43,10 +43,6 @@ config:
     description: Number of GPT extraction worker threads
     default: "10"
 
-  idi:stale_threshold_days:
-    description: Reprocess filings whose date_added is older than this; negative disables filtering
-    default: "30"
-
   idi:input_sample_size:
     description: Number of filings to process (0 = all, >0 for testing)
     default: "0"

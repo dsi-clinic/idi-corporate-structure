@@ -23,8 +23,11 @@ class FailureType(StrEnum):
         "no_filing_directory"  # SEC queried filing but no directory listing was found
     )
     NO_EXHIBIT_CONTENT = "no_exhibit_content"  # Exhibit has no content
+    NO_EXHIBIT_FOUND = "no_exhibit_found"  # No exhibit file found in filing directory
     DOCUMENT_ERROR = "document_error"  # Document is too long to process
     EXTRACTION_FAILED = "extraction_failed"  # GPT returned no structured data
+    TIMEOUT_ERROR = "timeout_error"  # OpenAI API timed out
+    TRUNCATED_ERROR = "truncated_error"  # Model response cut off at output token limit
     API_ERROR = "api_error"  # HTTP failure fetching filing document
     RATE_LIMIT = "rate_limit"  # SEC rate limit (429)
     NO_SUBSIDIARIES = "no_subsidiaries"  # No subsidiaries found for filing
@@ -39,10 +42,12 @@ class CorporateStructureFailureClassifier(FailureClassifier):
             FailureType.NO_FORM_DATA,
             FailureType.NO_10K_FILINGS,
             FailureType.NO_EXHIBIT_CONTENT,
+            FailureType.NO_EXHIBIT_FOUND,
             FailureType.NO_FILING_DIRECTORY,
             FailureType.DOCUMENT_ERROR,
             FailureType.NO_OVERFLOW_FILINGS,
             FailureType.NO_SUBSIDIARIES,
+            FailureType.TRUNCATED_ERROR,
         }
     )
 

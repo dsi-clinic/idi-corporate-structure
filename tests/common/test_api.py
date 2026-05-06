@@ -12,7 +12,7 @@ class TestSecClientQueryEndpoint:
     """Tests for SecClient.query_endpoint()."""
 
     def test_returns_json_by_default(self):
-        client = SecClient(rate_limit=0.0)
+        client = SecClient(rate_limit=0.0, user_agent="Test Agent test@example.com")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.url = "https://www.sec.gov/test"
@@ -25,7 +25,7 @@ class TestSecClientQueryEndpoint:
         assert result["data"] == {"directory": {"item": []}}
 
     def test_returns_text_when_return_json_false(self):
-        client = SecClient(rate_limit=0.0)
+        client = SecClient(rate_limit=0.0, user_agent="Test Agent test@example.com")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.url = "https://www.sec.gov/ex21.htm"
@@ -38,7 +38,7 @@ class TestSecClientQueryEndpoint:
         assert result["data"] == "<html>Subsidiaries</html>"
 
     def test_returns_error_key_on_request_exception(self):
-        client = SecClient(rate_limit=0.0)
+        client = SecClient(rate_limit=0.0, user_agent="Test Agent test@example.com")
 
         with patch.object(
             client.session,
@@ -52,7 +52,7 @@ class TestSecClientQueryEndpoint:
         assert "data" not in result
 
     def test_returns_error_on_404(self):
-        client = SecClient(rate_limit=0.0)
+        client = SecClient(rate_limit=0.0, user_agent="Test Agent test@example.com")
         mock_response = MagicMock()
         mock_response.status_code = 404
         mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("404")
@@ -63,7 +63,7 @@ class TestSecClientQueryEndpoint:
         assert "error" in result
 
     def test_updates_last_request_timestamp_after_rate_limit(self):
-        client = SecClient(rate_limit=0.0)
+        client = SecClient(rate_limit=0.0, user_agent="Test Agent test@example.com")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.url = "https://www.sec.gov/test"
@@ -78,7 +78,7 @@ class TestSecClientQueryEndpoint:
         assert client._last_request >= before
 
     def test_returns_bytes_when_return_bytes_true(self):
-        client = SecClient(rate_limit=0.0)
+        client = SecClient(rate_limit=0.0, user_agent="Test Agent test@example.com")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.url = "https://www.sec.gov/ex21.pdf"
@@ -95,7 +95,7 @@ class TestSecClientRateLimit:
     """Tests for SecClient.rate_limit()."""
 
     def test_sleeps_when_not_enough_time_elapsed(self):
-        client = SecClient(rate_limit=0.2)
+        client = SecClient(rate_limit=0.2, user_agent="Test Agent test@example.com")
         client._last_request = time.time()  # just now
 
         with patch("time.sleep") as mock_sleep:
@@ -106,7 +106,7 @@ class TestSecClientRateLimit:
         assert 0 < sleep_duration <= 0.2
 
     def test_no_sleep_when_enough_time_elapsed(self):
-        client = SecClient(rate_limit=0.1)
+        client = SecClient(rate_limit=0.1, user_agent="Test Agent test@example.com")
         client._last_request = time.time() - 1.0  # 1 second ago — well past 0.1s limit
 
         with patch("time.sleep") as mock_sleep:
@@ -115,7 +115,7 @@ class TestSecClientRateLimit:
         mock_sleep.assert_not_called()
 
     def test_updates_last_request_after_sleep(self):
-        client = SecClient(rate_limit=0.1)
+        client = SecClient(rate_limit=0.1, user_agent="Test Agent test@example.com")
         client._last_request = time.time()
         before = time.time()
 

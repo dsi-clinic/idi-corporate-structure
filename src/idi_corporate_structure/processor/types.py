@@ -7,6 +7,7 @@ import threading
 from dataclasses import dataclass
 
 _REMOTE_SCHEMES = ("s3://", "https://", "http://", "gs://")
+SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 
 
 def _is_local(path: str) -> bool:
@@ -42,7 +43,7 @@ class Filing:
 
     @property
     def exhibit_type(self) -> str:
-        """Retrun the exhibit number for the filing's subsidiary list.
+        """Return the exhibit number for the filing's subsidiary list.
 
         10-K filers use Exhibit 21; 20-F filers use Exhibit 8.
         """
@@ -80,7 +81,17 @@ class PipelineStats:
     skipped_filings: int = 0
     total_subsidiaries: int = 0
     failed_subsidiaries: int = 0
+    timeout_subsidiaries: int = 0
+    truncated_extractions: int = 0
+    chunked_extractions: int = 0
     zero_subsidiaries: int = 0
+    ungrounded_name: int = 0
+    ungrounded_location: int = 0
+    dropped_subsidiaries: int = 0
+    htm_exhibits: int = 0
+    html_exhibits: int = 0
+    txt_exhibits: int = 0
+    pdf_exhibits: int = 0
 
     def __post_init__(self) -> None:
         """Initialize the pipeline stats."""
@@ -111,3 +122,4 @@ class Subsidiary:
     location: str
     parent_name: str = ""
     parent_location: str = ""
+    source_quote: str = ""

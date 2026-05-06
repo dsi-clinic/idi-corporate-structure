@@ -22,11 +22,9 @@ Usage:
 
 import argparse
 import dataclasses
-import html as _html
 import json
 import logging
 import pathlib
-import re
 import sys
 from collections import Counter
 from collections.abc import Callable
@@ -34,10 +32,15 @@ from collections.abc import Callable
 import pandas as pd
 import requests
 
+from idi_corporate_structure.common.api import SecClient
+from idi_corporate_structure.processor.extractor import _normalize, html_to_text
+
 _DEFAULT_SAMPLE_SIZE = 30
 _LOCATION_EMPTY_RATE_THRESHOLD = 0.15
 _EXTRACTION_FAILED_RATE_THRESHOLD = 0.05
 _GROUNDING_FAIL_THRESHOLD = 0.05
+_LOCATION_GROUNDING_FAIL_THRESHOLD = 0.10
+_LOCATION_WINDOW = 200
 
 # Conservative lower bounds on subsidiary count for the most recent filing.
 # Actual counts are higher; these catch silent extraction failures.
@@ -52,6 +55,9 @@ _FAIL = "[FAIL]"
 _WARN = "[WARN]"
 _INFO = "[INFO]"
 
+_DEFAULT_RATE_LIMIT = 0.2
+_DEFAULT_MAX_RETRIES = 3
+
 log = logging.getLogger(__name__)
 
 
@@ -62,7 +68,7 @@ class VerifyContext:
     df: pd.DataFrame
     failures_path: str
     sample_size: int
-    sec_headers: dict[str, str]
+    sec_client: SecClient
 
 
 @dataclasses.dataclass(frozen=True)
@@ -101,24 +107,24 @@ def check_structural(ctx: VerifyContext) -> list[str]:
     """
     _section("Structural integrity")
     failures: list[str] = []
-    df = ctx.df
+    subs = ctx.df
 
-    blank_url = df["exhibit_url"].isna() | (df["exhibit_url"].astype(str) == "")
+    blank_url = subs["exhibit_url"].isna() | (subs["exhibit_url"].astype(str) == "")
     if blank_url.any():
         n = int(blank_url.sum())
         log.error("%s %d row(s) have a blank exhibit_url", _FAIL, n)
         log.error(
             "%s",
-            df[blank_url][["parent_cik", "accession_number", "name"]].to_string(index=False),
+            subs[blank_url][["parent_cik", "accession_number", "name"]].to_string(index=False),
         )
         failures.append(f"{n} rows with blank exhibit_url")
     else:
-        log.info("%s All %d rows have a non-empty exhibit_url", _PASS, len(df))
+        log.info("%s All %d rows have a non-empty exhibit_url", _PASS, len(subs))
 
-    is_10k = df["form_type"].str.match(r"10-?K", na=False)
-    is_20f = df["form_type"].str.match(r"20-?F", na=False)
-    bad_10k = is_10k & (df["exhibit_type"] != "21")
-    bad_20f = is_20f & (df["exhibit_type"] != "8")
+    is_10k = subs["form_type"].str.match(r"10-?K", na=False)
+    is_20f = subs["form_type"].str.match(r"20-?F", na=False)
+    bad_10k = is_10k & (subs["exhibit_type"] != "21")
+    bad_20f = is_20f & (subs["exhibit_type"] != "8")
 
     if bad_10k.any():
         n = int(bad_10k.sum())
@@ -137,28 +143,138 @@ def check_structural(ctx: VerifyContext) -> list[str]:
     other = ~is_10k & ~is_20f
     if other.any():
         log.warning("%s %d row(s) have an unexpected form_type:", _WARN, int(other.sum()))
-        log.warning("%s", df[other]["form_type"].value_counts().to_string())
+        log.warning("%s", subs[other]["form_type"].value_counts().to_string())
 
     return failures
 
 
+@dataclasses.dataclass
+class _GroundingCounts:
+    """Accumulated pass/total counts across all exhibits in a grounding check run."""
+
+    total_names: int = 0
+    passed_names: int = 0
+    total_locations: int = 0
+    passed_locations: int = 0
+
+
+def _fetch_exhibit_text(url: str, sec_client: SecClient) -> str:
+    """Fetch an exhibit URL through ``SecClient`` and return its plain text.
+
+    Spacing between requests is enforced via ``sec_client.rate_limit()`` and
+    transient ``429``/``5xx`` responses are retried with exponential backoff
+    (``Retry-After`` honored) by the underlying ``urllib3.Retry`` adapter.
+
+    Raises:
+        RuntimeError: when the client returns an ``error`` (network or HTTP).
+    """
+    result = sec_client.query_endpoint(url, return_json=False)
+    if "error" in result:
+        raise RuntimeError(result["error"])
+    return html_to_text(result["data"])
+
+
+def _name_in_plain(name_norm: str, plain_norm: str) -> bool:
+    """Return True if the pre-normalized name appears in the pre-normalized document."""
+    return name_norm in plain_norm
+
+
+def _location_near_name(name_norm: str, location: str, plain_norm: str) -> bool | None:
+    """Return True if the location appears within _LOCATION_WINDOW chars of the name.
+
+    Returns None when the name position cannot be found so the caller can skip
+    the location count rather than recording a false failure.
+    """
+    name_pos = plain_norm.find(name_norm)
+    if name_pos == -1:
+        return None
+    window = plain_norm[
+        max(0, name_pos - _LOCATION_WINDOW) : name_pos + len(name_norm) + _LOCATION_WINDOW
+    ]
+    return _normalize(location) in window
+
+
+def _check_exhibit_rows(
+    group_df: pd.DataFrame,
+    plain_norm: str,
+    url: str,
+    counts: _GroundingCounts,
+) -> None:
+    """Check every row in one exhibit group, updating counts and logging per-row warnings."""
+    for _, row in group_df.iterrows():
+        name = str(row["name"])
+        name_norm = _normalize(name)
+
+        counts.total_names += 1
+        if _name_in_plain(name_norm, plain_norm):
+            counts.passed_names += 1
+        else:
+            log.warning("%s Name '%s' not found in %s", _WARN, name, url)
+
+        location = str(row.get("location", "") or "")
+        if not location:
+            continue
+
+        counts.total_locations += 1
+        result = _location_near_name(name_norm, location, plain_norm)
+        if result is None:
+            counts.total_locations -= 1  # name absent — can't score location
+        elif result:
+            counts.passed_locations += 1
+        else:
+            log.warning("%s Location '%s' not near '%s' in %s", _WARN, location, name, url)
+
+
+def _report_grounding_rate(
+    label: str,
+    passed: int,
+    total: int,
+    threshold: float,
+    num_exhibits: int,
+) -> str | None:
+    """Log a grounding rate line and return a failure string when the threshold is exceeded.
+
+    Returns None (no failure) when total is zero or the rate is within threshold.
+    """
+    if not total:
+        log.info("%s No %s to check in this sample", _INFO, label)
+        return None
+    ungrounded = total - passed
+    rate = ungrounded / total
+    status = _FAIL if rate > threshold else _PASS
+    log.info(
+        "%s %d/%d %s found across %d exhibit(s) — %.1f%% ungrounded (threshold: %.0f%%)",
+        status,
+        passed,
+        total,
+        label,
+        num_exhibits,
+        rate * 100,
+        threshold * 100,
+    )
+    if rate > threshold:
+        return (
+            f"Ungrounded {label} rate {rate:.1%} exceeds {threshold:.0%}"
+            f" ({ungrounded}/{total} {label} across {num_exhibits} exhibit(s))"
+        )
+    return None
+
+
 def check_grounding(ctx: VerifyContext) -> list[str]:
-    """Fetch each unique exhibit URL once and verify all subsidiary names appear in it.
+    """Fetch each unique exhibit URL once and verify names and locations appear in it.
 
-    Catches:
-      - Hallucinated names (GPT invented a name not present in the source text).
-      - Wrong exhibit fetched (URL points to a different document than expected).
+    Name check:
+      - Verifies every subsidiary name appears in the plain-text exhibit (using the
+        same _normalize + html_to_text used by the extractor).
 
-    Groups rows by exhibit_url so each document is fetched exactly once, then checks
-    every name in that group against the response text. --sample-size limits the
-    number of unique exhibits fetched, not the number of rows — all names within a
-    fetched exhibit are always checked. Omit --sample-size (or set to 0) to check
-    every exhibit in the output.
+    Location check:
+      - For rows with a non-empty location, verifies the location appears within
+        _LOCATION_WINDOW characters of the name in the plain text — matching the
+        windowed check performed during extraction.
 
-    Location is not checked here — jurisdiction strings (e.g. "Delaware") appear
-    many times throughout a typical exhibit, so a substring match would pass even
-    for an incorrectly attributed location. Location completeness and distribution
-    are covered by the location check instead.
+    Groups rows by exhibit_url so each document is fetched exactly once.
+    --sample-size limits the number of unique exhibits fetched, not the number of
+    rows — all names within a fetched exhibit are always checked.
     """
     eligible = ctx.df[ctx.df["exhibit_url"].astype(str).str.startswith("http")]
     groups = eligible.groupby("exhibit_url")
@@ -167,36 +283,21 @@ def check_grounding(ctx: VerifyContext) -> list[str]:
     if ctx.sample_size:
         urls = urls[: ctx.sample_size]
 
-    _section(
-        f"Name grounding — {len(urls)} exhibit(s), {eligible['exhibit_url'].isin(urls).sum()} rows"
-    )
-    failures: list[str] = []
+    row_count = int(eligible["exhibit_url"].isin(urls).sum())
+    _section(f"Name + location grounding — {len(urls)} exhibit(s), {row_count} rows")
 
     if not urls:
         log.warning("%s No rows with fetchable exhibit URLs — skipping", _WARN)
-        return failures
+        return []
 
-    total_names = 0
-    passed = 0
+    counts = _GroundingCounts()
     fetch_errors: list[tuple[str, str]] = []
 
     for url in urls:
         try:
-            resp = requests.get(url, headers=ctx.sec_headers, timeout=15)
-            resp.raise_for_status()
-            # Decode HTML entities (&amp; → &, &lt; → <, etc.) then collapse all
-            # whitespace to a single space — older EDGAR exhibits both encode
-            # special characters as entities and split names across HTML lines.
-            text = re.sub(r"\s+", " ", _html.unescape(resp.text)).lower()
-
-            for _, row in groups.get_group(url).iterrows():
-                total_names += 1
-                if row["name"].lower() in text:
-                    passed += 1
-                else:
-                    log.warning("%s '%s' not found in %s", _WARN, row["name"], url)
-
-        except requests.RequestException as exc:
+            plain_norm = _normalize(_fetch_exhibit_text(url, ctx.sec_client))
+            _check_exhibit_rows(groups.get_group(url), plain_norm, url, counts)
+        except (RuntimeError, requests.RequestException) as exc:
             fetch_errors.append((str(url), str(exc)))
 
     if fetch_errors:
@@ -204,23 +305,25 @@ def check_grounding(ctx: VerifyContext) -> list[str]:
         for url, err in fetch_errors[:5]:
             log.warning("    %s: %s", url, err)
 
-    ungrounded = total_names - passed
-    ungrounded_rate = ungrounded / total_names if total_names else 0
-    rate_status = _FAIL if ungrounded_rate > _GROUNDING_FAIL_THRESHOLD else _PASS
-    log.info(
-        "%s %d/%d names found across %d exhibit(s) — %.1f%% ungrounded (threshold: %.0f%%)",
-        rate_status,
-        passed,
-        total_names,
-        len(urls),
-        ungrounded_rate * 100,
-        _GROUNDING_FAIL_THRESHOLD * 100,
-    )
-    if ungrounded_rate > _GROUNDING_FAIL_THRESHOLD:
-        failures.append(
-            f"Ungrounded name rate {ungrounded_rate:.1%} exceeds {_GROUNDING_FAIL_THRESHOLD:.0%}"
-            f" ({ungrounded}/{total_names} names across {len(urls)} exhibit(s))"
-        )
+    failures: list[str] = []
+    for msg in [
+        _report_grounding_rate(
+            "names",
+            counts.passed_names,
+            counts.total_names,
+            _GROUNDING_FAIL_THRESHOLD,
+            len(urls),
+        ),
+        _report_grounding_rate(
+            "locations",
+            counts.passed_locations,
+            counts.total_locations,
+            _LOCATION_GROUNDING_FAIL_THRESHOLD,
+            len(urls),
+        ),
+    ]:
+        if msg:
+            failures.append(msg)
 
     return failures
 
@@ -241,9 +344,9 @@ def check_location(ctx: VerifyContext) -> list[str]:
     """
     _section("Location quality")
     failures: list[str] = []
-    df = ctx.df
+    subs = ctx.df
 
-    empty_loc = df["location"].isna() | (df["location"].astype(str) == "")
+    empty_loc = subs["location"].isna() | (subs["location"].astype(str) == "")
     rate = float(empty_loc.mean())
     status = _FAIL if rate > _LOCATION_EMPTY_RATE_THRESHOLD else _PASS
     log.info(
@@ -258,8 +361,31 @@ def check_location(ctx: VerifyContext) -> list[str]:
             f"{_LOCATION_EMPTY_RATE_THRESHOLD:.0%}"
         )
 
+    # Per-exhibit breakdown — show exhibits with the highest empty location count
+    if empty_loc.any():
+        exhibit_stats = (
+            subs.groupby("exhibit_url")
+            .agg(
+                total=("location", "count"),
+                empty=("location", lambda s: (s.isna() | (s.astype(str) == "")).sum()),
+            )
+            .assign(empty_rate=lambda d: d["empty"] / d["total"])
+            .query("empty > 0")
+            .sort_values("empty", ascending=False)
+            .head(10)
+        )
+        log.info("\n%s Top exhibits by empty location count (up to 10):", _INFO)
+        for url, row in exhibit_stats.iterrows():
+            log.info(
+                "  %3d / %3d empty (%.0f%%)  %s",
+                int(row["empty"]),
+                int(row["total"]),
+                row["empty_rate"] * 100,
+                url,
+            )
+
     log.info("\n%s parent_location top 20 (raw SEC stateOfIncorporation codes):", _INFO)
-    log.info("%s", df["parent_location"].value_counts().head(20).to_string())
+    log.info("%s", subs["parent_location"].value_counts().head(20).to_string())
 
     return failures
 
@@ -410,6 +536,25 @@ def create_args() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--rate-limit",
+        type=float,
+        default=_DEFAULT_RATE_LIMIT,
+        metavar="SECONDS",
+        help=(
+            f"Minimum seconds between SEC requests (default: {_DEFAULT_RATE_LIMIT}). "
+            "Increase if SEC EDGAR throttles a full-corpus run."
+        ),
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=_DEFAULT_MAX_RETRIES,
+        help=(
+            f"Max retries for transient 429/5xx responses (default: {_DEFAULT_MAX_RETRIES}). "
+            "Backoff is exponential and Retry-After is honored."
+        ),
+    )
+    parser.add_argument(
         "--checks",
         nargs="+",
         choices=_CHECK_NAMES,
@@ -445,19 +590,25 @@ def main() -> None:
     # Load the results parquet file
     log.info("\nLoading %s ...", args.parquet)
     try:
-        df = pd.read_parquet(args.parquet)
+        subs = pd.read_parquet(args.parquet)
     except FileNotFoundError:
         log.error("%s Parquet file not found: %s", _FAIL, args.parquet)
         sys.exit(1)
 
-    log.info("%s %d rows across %d unique parent CIKs", _INFO, len(df), df["parent_cik"].nunique())
+    log.info(
+        "%s %d rows across %d unique parent CIKs", _INFO, len(subs), subs["parent_cik"].nunique()
+    )
+
+    # Build a SEC client with retry/backoff and a per-instance User-Agent
+    sec_client = SecClient(rate_limit=args.rate_limit, user_agent=args.user_agent)
+    sec_client.max_retries = args.max_retries
 
     # Create an object to hold the context for the checks
     ctx = VerifyContext(
-        df=df,
+        df=subs,
         failures_path=args.failures,
         sample_size=args.sample_size,
-        sec_headers={"User-Agent": args.user_agent},
+        sec_client=sec_client,
     )
 
     # Run selected checks

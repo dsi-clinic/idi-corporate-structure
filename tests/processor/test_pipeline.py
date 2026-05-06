@@ -9,6 +9,10 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 
+from idi_corporate_structure.processor.extractor import (
+    ExtractionTruncatedError,
+    html_to_text,
+)
 from idi_corporate_structure.processor.failures import FailureType
 from idi_corporate_structure.processor.types import Filing, Subsidiary
 from tests.conftest import make_cik_json, make_directory_response, make_exhibit_response
@@ -126,7 +130,7 @@ class TestCreateFiling:
     def test_sets_empty_primary_for_non_htm(self, pipeline):
         filing = pipeline._create_filing(
             accession_number="0000320193-24-000123",
-            primary_document="aapl-20240928.txt",
+            primary_document="aapl-20240928.xyz",
             filing_date="2024-09-28",
             form="10-K",
             company_data=self._COMPANY_DATA,
@@ -345,13 +349,6 @@ class TestFetchDirectory:
 
         assert pipeline.stats.failed_subsidiaries == 1
 
-    def test_calls_rate_limit_after_success(self, pipeline, sample_filing):
-        pipeline.sec_client.query_endpoint.return_value = make_directory_response([])
-
-        pipeline._fetch_directory(sample_filing)
-
-        pipeline.sec_client.rate_limit.assert_called_once()
-
     def test_returns_empty_list_for_empty_directory(self, pipeline, sample_filing):
         pipeline.sec_client.query_endpoint.return_value = make_directory_response([])
 
@@ -376,7 +373,7 @@ class TestFetchExhibitContent:
         result = pipeline._fetch_exhibit_content(sample_filing, item)
 
         assert result["url"] is not None
-        assert result["data"] == make_exhibit_response()["data"]
+        assert result["data"] == html_to_text(make_exhibit_response()["data"])
         pipeline.sec_client.query_endpoint.assert_called_once()
 
     def test_fetches_exhibit_named_21_prefix(self, pipeline, sample_filing):
@@ -412,21 +409,13 @@ class TestFetchExhibitContent:
         assert result == {}
         assert pipeline.stats.failed_subsidiaries == 1
 
-    def test_calls_rate_limit_after_exhibit_fetch(self, pipeline, sample_filing):
-        item = {"name": "d12345ex21.htm", "type": "text.gif"}
-        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
-
-        pipeline._fetch_exhibit_content(sample_filing, item)
-
-        pipeline.sec_client.rate_limit.assert_called_once()
-
-    def test_does_not_call_rate_limit_for_skipped_item(self, pipeline, sample_filing):
+    def test_does_not_fetch_for_skipped_item(self, pipeline, sample_filing):
         # "primarydoc.htm" contains neither EX (preceded by \w) nor SUB
         item = {"name": "primarydoc.htm", "type": "text.gif"}
 
         pipeline._fetch_exhibit_content(sample_filing, item)
 
-        pipeline.sec_client.rate_limit.assert_not_called()
+        pipeline.sec_client.query_endpoint.assert_not_called()
 
     def test_builds_correct_url(self, pipeline, sample_filing):
         item = {"name": "d12345ex21.htm", "type": "text.gif"}
@@ -439,6 +428,33 @@ class TestFetchExhibitContent:
         assert "0000320193" in called_url
         assert "d12345ex21.htm" in called_url
         assert "-" not in called_url.split("/")[-2]  # accession number has no dashes
+
+    def test_increments_htm_counter(self, pipeline, sample_filing):
+        item = {"name": "d12345ex21.htm", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert pipeline.stats.htm_exhibits == 1
+        assert pipeline.stats.html_exhibits == 0
+        assert pipeline.stats.txt_exhibits == 0
+        assert pipeline.stats.pdf_exhibits == 0
+
+    def test_increments_html_counter(self, pipeline, sample_filing):
+        item = {"name": "d12345ex21.html", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert pipeline.stats.html_exhibits == 1
+
+    def test_increments_txt_counter(self, pipeline, sample_filing):
+        item = {"name": "d12345ex21.txt", "type": "text.gif"}
+        pipeline.sec_client.query_endpoint.return_value = make_exhibit_response()
+
+        pipeline._fetch_exhibit_content(sample_filing, item)
+
+        assert pipeline.stats.txt_exhibits == 1
 
     def test_fetches_pdf_exhibit_and_extracts_text(self, pipeline, sample_filing, mocker):
         item = {"name": "d12345ex21.pdf", "type": "text.gif"}
@@ -625,7 +641,9 @@ class TestProcess:
         exhibit_content = [make_exhibit_response()]
 
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=exhibit_content)
-        pipeline.extractor.extract.side_effect = [[self._make_subsidiary(f.cik)] for f in filings]
+        pipeline.extractor.extract.side_effect = [
+            ([self._make_subsidiary(f.cik)], 0, 0, 1) for f in filings
+        ]
 
         results = pipeline.process(filings)
 
@@ -653,8 +671,8 @@ class TestProcess:
         subsidiary = self._make_subsidiary("CIK0000000000")
         pipeline.extractor.extract.side_effect = [
             RuntimeError("GPT error"),
-            [subsidiary],
-            [subsidiary],
+            ([subsidiary], 0, 0, 1),
+            ([subsidiary], 0, 0, 1),
         ]
 
         results = pipeline.process(filings)
@@ -666,10 +684,12 @@ class TestProcess:
     def test_increments_total_subsidiaries(self, pipeline, mocker):
         filings = [self._make_filing(0)]
         mocker.patch.object(pipeline, "_fetch_exhibit", return_value=[make_exhibit_response()])
-        pipeline.extractor.extract.return_value = [
-            self._make_subsidiary("CIK0000000000"),
-            self._make_subsidiary("CIK0000000000"),
-        ]
+        pipeline.extractor.extract.return_value = (
+            [self._make_subsidiary("CIK0000000000"), self._make_subsidiary("CIK0000000000")],
+            0,
+            0,
+            1,
+        )
 
         pipeline.process(filings)
 
@@ -710,7 +730,7 @@ class TestExtractWorker:
             accession_number=sample_filing.accession_number,
             exhibit_url="",
         )
-        pipeline.extractor.extract.return_value = [subsidiary]
+        pipeline.extractor.extract.return_value = ([subsidiary], 0, 0, 1)
 
         work_queue, results_queue = queue.Queue(), queue.Queue()
         self._start_worker(pipeline, work_queue, results_queue)
@@ -759,6 +779,46 @@ class TestExtractWorker:
 
         spy.assert_called_once_with(
             (sample_filing.cik, sample_filing.filename), FailureType.EXTRACTION_FAILED
+        )
+
+    def test_chunked_extraction_increments_stat(self, pipeline, sample_filing):
+        pipeline.extractor.extract.return_value = ([], 0, 0, 5)  # 5 chunks
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, make_exhibit_response()))
+        work_queue.join()
+
+        assert pipeline.stats.chunked_extractions == 1
+
+    def test_one_shot_does_not_increment_chunked(self, pipeline, sample_filing):
+        pipeline.extractor.extract.return_value = ([], 0, 0, 1)  # single chunk
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, make_exhibit_response()))
+        work_queue.join()
+
+        assert pipeline.stats.chunked_extractions == 0
+
+    def test_truncated_extraction_increments_truncated_and_failed(
+        self, pipeline, sample_filing, mocker
+    ):
+        pipeline.extractor.extract.side_effect = ExtractionTruncatedError("output cut off")
+        spy = mocker.spy(pipeline.failure_registry, "add")
+
+        work_queue, results_queue = queue.Queue(), queue.Queue()
+        self._start_worker(pipeline, work_queue, results_queue)
+
+        work_queue.put((sample_filing, make_exhibit_response()))
+        work_queue.join()
+
+        assert pipeline.stats.truncated_extractions == 1
+        assert pipeline.stats.failed_subsidiaries == 1
+        spy.assert_called_once_with(
+            (sample_filing.cik, sample_filing.filename), FailureType.TRUNCATED_ERROR
         )
 
 
@@ -893,6 +953,57 @@ class TestSaveOutput:
         result_df = pd.read_parquet(pipeline.config.output_file)
         assert len(result_df) == 2
 
+    def test_normalizes_location_strings_on_write(self, pipeline):
+        """Footnote markers, sentinels, and country aliases should be canonicalized."""
+        subs = [
+            Subsidiary(
+                parent_cik="0000000001",
+                parent_name="ACME",
+                parent_location="DE",
+                name="Acme China Sub",
+                location="PRC",
+                filing_date="2024-01-01",
+                form_type="10-K",
+                exhibit_type="21",
+                accession_number="0000000001-24-000001",
+                exhibit_url="https://example.com/ex21.htm",
+            ),
+            Subsidiary(
+                parent_cik="0000000001",
+                parent_name="ACME",
+                parent_location="E9",
+                name="Acme Mexico Sub",
+                location="Mexico(2)",
+                filing_date="2024-01-01",
+                form_type="10-K",
+                exhibit_type="21",
+                accession_number="0000000001-24-000001",
+                exhibit_url="https://example.com/ex21.htm",
+            ),
+            Subsidiary(
+                parent_cik="0000000001",
+                parent_name="ACME",
+                parent_location="L2",
+                name="Acme Mystery Sub",
+                location="Unknown",
+                filing_date="2024-01-01",
+                form_type="10-K",
+                exhibit_type="21",
+                accession_number="0000000001-24-000001",
+                exhibit_url="https://example.com/ex21.htm",
+            ),
+        ]
+
+        pipeline.save_output(subs)
+
+        result_df = pd.read_parquet(pipeline.config.output_file).set_index("name")
+        assert result_df.loc["Acme China Sub", "location"] == "China"
+        assert result_df.loc["Acme China Sub", "parent_location"] == "Delaware"
+        assert result_df.loc["Acme Mexico Sub", "location"] == "Mexico"
+        assert result_df.loc["Acme Mexico Sub", "parent_location"] == "Cayman Islands"
+        assert result_df.loc["Acme Mystery Sub", "location"] == ""
+        assert result_df.loc["Acme Mystery Sub", "parent_location"] == "Ireland"
+
 
 # ── display_stats ─────────────────────────────────────────────────────────────
 
@@ -933,3 +1044,145 @@ class TestDisplayStats:
         assert any("Filings" in arg for arg in logged_args)
         assert any("Subsidiaries" in arg for arg in logged_args)
         assert any("=" in arg for arg in logged_args)
+
+
+# ── _filter_already_processed ─────────────────────────────────────────────────
+
+
+class TestFilterAlreadyProcessed:
+    """Tests for SubsidiaryPipeline._filter_already_processed()."""
+
+    def _make_filing(
+        self,
+        cik: str = "0000320193",
+        accession: str = "0000320193-24-000001",
+        filename: str = "CIK0000320193.json",
+    ) -> Filing:
+        return Filing(
+            cik=cik,
+            filing_date="2024-09-28",
+            form_type="10-K",
+            accession_number=accession,
+            directory="https://www.sec.gov/Archives/edgar/data/0000320193/index.json",
+            primary_document="",
+            filename=filename,
+        )
+
+    def _write_parquet(self, path: str, rows: list[dict]) -> None:
+        pd.DataFrame(rows).to_parquet(path)
+
+    def test_returns_all_filings_when_no_parquet(self, pipeline):
+        filings = [self._make_filing()]
+
+        result = pipeline._filter_already_processed(filings)
+
+        assert result == filings
+
+    def test_returns_all_when_parquet_is_empty(self, pipeline):
+        pd.DataFrame(columns=["parent_cik", "accession_number"]).to_parquet(
+            pipeline.config.output_file
+        )
+        filing = self._make_filing()
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing in result
+
+    def test_returns_all_when_parquet_has_no_expected_columns(self, pipeline):
+        pd.DataFrame().to_parquet(pipeline.config.output_file)
+        filing = self._make_filing()
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing in result
+
+    def test_skips_already_processed_filing(self, pipeline):
+        filing = self._make_filing()
+        self._write_parquet(
+            pipeline.config.output_file,
+            [
+                {
+                    "parent_cik": filing.cik,
+                    "accession_number": filing.accession_number,
+                    "name": "Sub A",
+                }
+            ],
+        )
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert result == []
+
+    def test_includes_new_filing_not_in_parquet(self, pipeline):
+        self._write_parquet(
+            pipeline.config.output_file,
+            [{"parent_cik": "OTHER_CIK", "accession_number": "OTHER_ACC", "name": "Sub A"}],
+        )
+        filing = self._make_filing()
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing in result
+
+    def test_skips_filing_in_failure_registry(self, pipeline):
+        filing = self._make_filing()
+        self._write_parquet(
+            pipeline.config.output_file,
+            [{"parent_cik": "OTHER", "accession_number": "OTHER", "name": "X"}],
+        )
+        pipeline.failure_registry._entries.add((filing.cik, filing.filename))
+
+        result = pipeline._filter_already_processed([filing])
+
+        assert filing not in result
+
+    def test_mixed_already_processed_and_new(self, pipeline):
+        """Already-processed filing skipped, new included, failure-registry excluded."""
+        processed_filing = self._make_filing(accession="ACC-PROCESSED")
+        new_filing = self._make_filing(accession="ACC-NEW")
+        failed_filing = self._make_filing(
+            cik="0000111111", accession="ACC-FAILED", filename="CIK0000111111.json"
+        )
+
+        self._write_parquet(
+            pipeline.config.output_file,
+            [{"parent_cik": "0000320193", "accession_number": "ACC-PROCESSED", "name": "Sub A"}],
+        )
+        pipeline.failure_registry._entries.add(("0000111111", "CIK0000111111.json"))
+
+        result = pipeline._filter_already_processed([processed_filing, new_filing, failed_filing])
+
+        assert processed_filing not in result
+        assert new_filing in result
+        assert failed_filing not in result
+
+
+# ── run (early exit) ──────────────────────────────────────────────────────────
+
+
+class TestRunEarlyExit:
+    """Tests for Pipeline.run() early-exit when load_input returns nothing."""
+
+    def test_skips_process_when_nothing_to_process(self, pipeline, mocker):
+        mocker.patch.object(pipeline, "load_input", return_value=[])
+        mock_process = mocker.patch.object(pipeline, "process")
+
+        pipeline.run()
+
+        mock_process.assert_not_called()
+
+    def test_skips_save_output_when_nothing_to_process(self, pipeline, mocker):
+        mocker.patch.object(pipeline, "load_input", return_value=[])
+        mock_save = mocker.patch.object(pipeline, "save_output")
+
+        pipeline.run()
+
+        mock_save.assert_not_called()
+
+    def test_flushes_failure_registry_on_early_exit(self, pipeline, mocker):
+        mocker.patch.object(pipeline, "load_input", return_value=[])
+        mock_flush = mocker.patch.object(pipeline.failure_registry, "flush")
+
+        pipeline.run()
+
+        mock_flush.assert_called_once()

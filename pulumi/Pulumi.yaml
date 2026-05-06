@@ -15,6 +15,14 @@ config:
     description: OpenAI API key (stored as secret in AWS Secrets Manager)
     secret: true
 
+  idi:openai_model:
+    description: OpenAI model ID used for subsidiary extraction
+    default: "gpt-4.1-nano"
+
+  idi:sec_user_agent:
+    description: "SEC EDGAR User-Agent header value (format: Name email@example.com)"
+    secret: true
+
   idi:cron_corporate_structure:
     description: EventBridge cron schedule for the corporate structure processor
     default: "cron(0 2 * * ? *)"

@@ -1,8 +1,8 @@
 r"""Curate a year-filtered subset of SEC EDGAR submissions.zip.
 
 Produces a drop-in replacement zip that contains only companies with at
-least one filing in the target year, with each company's CIK JSON rewritten
-so that ``filings.recent`` holds *only* that year's filings (across all
+least one filing in the target year(s), with each company's CIK JSON rewritten
+so that ``filings.recent`` holds *only* the matching filings (across all
 forms) and ``filings.files`` is empty. Overflow sibling files
 (``CIK*-submissions-*.json``) are not copied.
 
@@ -11,11 +11,17 @@ of ``CIK*.json`` entries, same per-company schema — just smaller. It drops
 straight into the pipeline via ``config.input_file``; no pipeline code
 changes are needed.
 
-Usage:
+Usage (single year):
     uv run python scripts/curate_submissions.py \\
         --input submissions.zip \\
         --output submissions_2025.zip \\
         --year 2025
+
+Usage (multiple years — combined into one zip):
+    uv run python scripts/curate_submissions.py \\
+        --input submissions.zip \\
+        --output submissions_2023_2024_2025.zip \\
+        --year 2023 2024 2025
 """
 
 import argparse
@@ -33,8 +39,8 @@ _IS_PRIMARY_CIK = re.compile(r"^CIK\d+\.json$")
 log = logging.getLogger(__name__)
 
 
-def _filter_recent(recent: dict, year_prefix: str) -> tuple[dict, list[str]]:
-    """Return a new ``recent`` dict keeping only indices where filingDate matches.
+def _filter_recent(recent: dict, year_prefixes: set[str]) -> tuple[dict, list[str]]:
+    """Return a new ``recent`` dict keeping only indices where filingDate matches any prefix.
 
     Every parallel array in ``recent`` is masked with the same index set so
     the equal-length invariant the pipeline validates (pipeline.py:238-245)
@@ -42,14 +48,17 @@ def _filter_recent(recent: dict, year_prefix: str) -> tuple[dict, list[str]]:
 
     Args:
         recent: Original ``filings.recent`` mapping.
-        year_prefix: E.g. ``"2025-"``; kept rows must have filingDate starting with this.
+        year_prefixes: E.g. ``{"2023-", "2024-", "2025-"}``; a row is kept if its
+            filingDate starts with any of these.
 
     Returns:
         Tuple of (filtered recent dict, list of kept form strings).
     """
     filing_dates = recent.get("filingDate", [])
     keep_idx = [
-        i for i, d in enumerate(filing_dates) if isinstance(d, str) and d.startswith(year_prefix)
+        i
+        for i, d in enumerate(filing_dates)
+        if isinstance(d, str) and any(d.startswith(p) for p in year_prefixes)
     ]
 
     filtered: dict = {}
@@ -65,7 +74,9 @@ def _filter_recent(recent: dict, year_prefix: str) -> tuple[dict, list[str]]:
     return filtered, kept_forms
 
 
-def _merge_overflow(data: dict, zf: zipfile.ZipFile, year_prefix: str) -> tuple[dict, list[str]]:
+def _merge_overflow(
+    data: dict, zf: zipfile.ZipFile, year_prefixes: set[str]
+) -> tuple[dict, list[str]]:
     """Append any year-matching rows from overflow files into a filtered recent.
 
     Overflow files store the same parallel-array keys at top level (not
@@ -76,7 +87,7 @@ def _merge_overflow(data: dict, zf: zipfile.ZipFile, year_prefix: str) -> tuple[
         Tuple of (combined filtered recent dict, list of kept forms).
     """
     recent = data.get("filings", {}).get("recent", {}) or {}
-    filtered_recent, kept_forms = _filter_recent(recent, year_prefix)
+    filtered_recent, kept_forms = _filter_recent(recent, year_prefixes)
 
     for entry in data.get("filings", {}).get("files", []) or []:
         name = entry.get("name", "")
@@ -93,7 +104,9 @@ def _merge_overflow(data: dict, zf: zipfile.ZipFile, year_prefix: str) -> tuple[
         if not o_dates:
             continue
         keep_idx = [
-            i for i, d in enumerate(o_dates) if isinstance(d, str) and d.startswith(year_prefix)
+            i
+            for i, d in enumerate(o_dates)
+            if isinstance(d, str) and any(d.startswith(p) for p in year_prefixes)
         ]
         if not keep_idx:
             continue
@@ -116,9 +129,9 @@ def _merge_overflow(data: dict, zf: zipfile.ZipFile, year_prefix: str) -> tuple[
     return filtered_recent, kept_forms
 
 
-def curate(input_path: pathlib.Path, output_path: pathlib.Path, year: int) -> None:
+def curate(input_path: pathlib.Path, output_path: pathlib.Path, years: list[int]) -> None:
     """Read input submissions zip, write year-filtered output zip."""
-    year_prefix = f"{year}-"
+    year_prefixes = {f"{y}-" for y in years}
     companies_scanned = 0
     companies_kept = 0
     total_filings = 0
@@ -145,7 +158,7 @@ def curate(input_path: pathlib.Path, output_path: pathlib.Path, year: int) -> No
                 log.warning("Could not read %s: %s", name, exc)
                 continue
 
-            filtered_recent, kept_forms = _merge_overflow(data, zin, year_prefix)
+            filtered_recent, kept_forms = _merge_overflow(data, zin, year_prefixes)
 
             if not kept_forms:
                 continue
@@ -158,8 +171,9 @@ def curate(input_path: pathlib.Path, output_path: pathlib.Path, year: int) -> No
             total_filings += len(kept_forms)
             form_counter.update(kept_forms)
 
+    years_str = ", ".join(str(y) for y in sorted(years))
     log.info("=" * 60)
-    log.info("Curation summary (year=%d)", year)
+    log.info("Curation summary (years=%s)", years_str)
     log.info("=" * 60)
     log.info("Companies scanned: %d", companies_scanned)
     log.info("Companies kept:    %d", companies_kept)
@@ -180,11 +194,13 @@ def main() -> None:
     parser.add_argument(
         "--input", required=True, type=pathlib.Path, help="Path to input submissions.zip"
     )
+    parser.add_argument("--output", required=True, type=pathlib.Path, help="Path to output zip")
     parser.add_argument(
-        "--output", required=True, type=pathlib.Path, help="Path to output submissions_{year}.zip"
-    )
-    parser.add_argument(
-        "--year", type=int, default=2025, help="Filing year to keep (default: 2025)"
+        "--year",
+        type=int,
+        nargs="+",
+        default=[2025],
+        help="Filing year(s) to keep (default: 2025). Pass multiple values to combine years.",
     )
     args = parser.parse_args()
 

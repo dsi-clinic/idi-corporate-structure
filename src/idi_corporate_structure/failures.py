@@ -3,8 +3,8 @@
 # Standard library imports
 from enum import StrEnum
 
-# Application imports
-from idi_corporate_structure.common.failures import FailureClassifier
+# Third-party imports
+from idi_ftm2j_shared.failures import FailureClassifier
 
 _HTTP_RATE_LIMIT = 429
 _HTTP_OK = 200

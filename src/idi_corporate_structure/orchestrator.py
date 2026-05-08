@@ -12,10 +12,10 @@ import datetime
 import os
 
 # Application imports
-from idi_corporate_structure.common.api import SecClient
-from idi_corporate_structure.processor.extractor import GptExtractor
-from idi_corporate_structure.processor.pipeline import SubsidiaryPipeline
-from idi_corporate_structure.processor.types import PipelineConfig
+from idi_corporate_structure.api import SecClient
+from idi_corporate_structure.extractor import GptExtractor
+from idi_corporate_structure.pipeline import SubsidiaryPipeline
+from idi_corporate_structure.types import PipelineConfig
 
 
 def get_args() -> argparse.Namespace:

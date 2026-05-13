@@ -15,8 +15,8 @@ COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir uv && \
+    uv pip install --system --no-cache-dir -e .
 
 # Final stage - minimal runtime image
 FROM python:3.13-slim
@@ -47,5 +47,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import sys; sys.exit(0)"
 
 # Default command (can be overridden in compose)
-ENTRYPOINT ["python", "-m", "idi_corporate_structure.processor.orchestrator"]
+ENTRYPOINT ["python", "-m", "idi_corporate_structure.orchestrator"]
 CMD ["--help"]

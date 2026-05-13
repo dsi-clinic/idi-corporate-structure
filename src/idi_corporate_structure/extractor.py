@@ -105,7 +105,7 @@ class GptExtractor(Extractor):
         """
         self._openai_client = OpenAiClient(api_key=openai_api_key)
         self._model = model or self._DEFAULT_MODEL
-        self._logger = get_logger(__name__)
+        self._logger = get_logger(type(self).__name__)
 
     def _extract_with_chunking(self, doc_text: str, company_name: str) -> tuple[list[dict], int]:
         """Run extraction one-shot, falling back to chunked extraction if needed.

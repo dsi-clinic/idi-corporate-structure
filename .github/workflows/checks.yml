@@ -114,10 +114,10 @@ jobs:
     env:
       PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
       PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
-      IDI_BUCKET_NAME: ${{ secrets.IDI_BUCKET_NAME }}
-      IDI_SHARED_DLQ_NAME: ${{ secrets.IDI_SHARED_DLQ_NAME }}
-      IDI_OPENAI_API_KEY: ${{ secrets.IDI_OPENAI_API_KEY }}
-      IDI_SEC_USER_AGENT: ${{ secrets.IDI_SEC_USER_AGENT }}
+      IDI_BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+      IDI_SHARED_DLQ_NAME: ${{ secrets.SHARED_DLQ_NAME }}
+      IDI_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      IDI_SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
     steps:
       - uses: actions/checkout@v4
 

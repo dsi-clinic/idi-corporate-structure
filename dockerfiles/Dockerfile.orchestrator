@@ -17,7 +17,7 @@ COPY src/ ./src/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir uv && \
-    uv pip install --system --no-cache-dir -e .
+    uv pip install --system --no-cache-dir .
 
 # Final stage - minimal runtime image
 FROM python:3.13-slim
@@ -32,7 +32,6 @@ WORKDIR /app
 
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --from=builder /app /app
 
 # Switch to non-root user
 USER pipeline

@@ -31,6 +31,7 @@ from collections.abc import Callable
 
 import pandas as pd
 import requests
+
 from idi_corporate_structure.common.api import SecClient
 from idi_corporate_structure.processor.extractor import _normalize, html_to_text
 

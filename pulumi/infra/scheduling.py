@@ -96,12 +96,18 @@ def _container_override_input() -> str:
     with the same arguments. All values resolve to plain strings at plan time.
     """
     command = [
-        "--input-file", ecs.input_file,
-        "--output-file", ecs.output_file,
-        "--failure-file", ecs.failure_file,
-        "--rate-limit", ecs.rate_limit,
-        "--num-workers", ecs.num_workers,
-        "--model", ecs.openai_model,
+        "--input-file",
+        ecs.input_file,
+        "--output-file",
+        ecs.output_file,
+        "--failure-file",
+        ecs.failure_file,
+        "--rate-limit",
+        ecs.rate_limit,
+        "--num-workers",
+        ecs.num_workers,
+        "--model",
+        ecs.openai_model,
     ]
     return json.dumps({"containerOverrides": [{"name": _CONTAINER_NAME, "command": command}]})
 

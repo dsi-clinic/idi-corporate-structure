@@ -80,7 +80,6 @@ ignore = [
   "D415",   # allow first line of doctstrings to end without punctuation
   "ANN002", # missing type on *args
   "ANN003", # missing type on **kwargs
-  "ANN101", # annotating self is non-standard and not required
   "B905",   # won't work on python <3.10
   "S101",   # allow assertions
 ]

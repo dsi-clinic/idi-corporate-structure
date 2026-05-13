@@ -7,7 +7,6 @@ import zipfile
 from unittest.mock import MagicMock
 
 import pytest
-
 from idi_ftm2j_shared.storage import load_json, open_zip, save_json
 
 

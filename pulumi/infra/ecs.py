@@ -1,6 +1,5 @@
 """ECS cluster and Fargate task definition for the corporate structure processor.
 
-
 Per-pipeline arguments (input file, type, batch size, etc.) are injected by the
 EventBridge schedules via ECS containerOverrides — see scheduling.py. The task
 definition's baseline command is `--help` so a misconfigured override fails

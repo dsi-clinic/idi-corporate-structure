@@ -183,6 +183,7 @@ jobs:
       OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
       CRON: ${{ secrets.CRON }}
+      SHARED_DLQ_NAME: ${{ secrets.SHARED_DLQ_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -221,6 +222,7 @@ jobs:
           [ -n "$OPENAI_MODEL" ] && pulumi config set idi:openai_model "$OPENAI_MODEL"
           [ -n "$SEC_USER_AGENT" ] && pulumi config set --secret idi:sec_user_agent "$SEC_USER_AGENT"
           [ -n "$CRON" ] && pulumi config set idi:cron_corporate_structure "$CRON"
+          [ -n "$SHARED_DLQ_NAME" ] && pulumi config set idi:shared_dlq_name "$SHARED_DLQ_NAME"
 
       - name: Pulumi deploy
         run: |

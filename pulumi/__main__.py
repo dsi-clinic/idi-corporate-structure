@@ -4,7 +4,7 @@ Imports all resource modules (creation order matters) and exports stack outputs.
 """
 
 # Import order matters: config first, then resources by dependency
-from infra import ecr, ecs, iam, networking, scheduling, secrets
+from infra import ecr, ecs, iam, logs, networking, scheduling, secrets
 
 import pulumi
 
@@ -24,6 +24,11 @@ pulumi.export("task_execution_role_name", iam.task_execution_role.name)
 pulumi.export("task_role_arn", iam.task_role.arn)
 pulumi.export("task_role_name", iam.task_role.name)
 
+# Logs
+pulumi.export("log_group_arn", logs.log_group.arn)
+pulumi.export("log_group_name", logs.log_group.name)
+pulumi.export("log_group_retention_days", logs.log_group.retention_in_days)
+
 # ECR
 pulumi.export("ecr_repo_url", ecr.ecr_repo.repository_url)
 pulumi.export("ecr_orchestrator_image", ecr.orchestrator_image)
@@ -32,7 +37,7 @@ pulumi.export("ecr_orchestrator_image", ecr.orchestrator_image)
 pulumi.export("ecs_cluster_arn", ecs.cluster.arn)
 pulumi.export("ecs_cluster_name", ecs.cluster.name)
 pulumi.export("task_definition_arn", ecs.task_definition.arn)
-pulumi.export("log_group_name", ecs.log_group.name)
+pulumi.export("log_group_name", logs.log_group.name)
 
 # Secrets
 pulumi.export("openai_secret_arn", secrets.openai_secret.arn)
@@ -41,7 +46,7 @@ pulumi.export("openai_secret_name", secrets.openai_secret.name)
 # Scheduling
 pulumi.export("schedule_name", scheduling.schedule.name)
 pulumi.export("schedule_arn", scheduling.schedule.arn)
-pulumi.export("dlq_url", scheduling.dlq.url)
-pulumi.export("dlq_arn", scheduling.dlq.arn)
+pulumi.export("dlq_url", scheduling.shared_dlq.url)
+pulumi.export("dlq_arn", scheduling.shared_dlq.arn)
 pulumi.export("scheduler_role_arn", scheduling.scheduler_role.arn)
 pulumi.export("scheduler_role_name", scheduling.scheduler_role.name)

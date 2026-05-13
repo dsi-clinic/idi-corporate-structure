@@ -15,7 +15,7 @@ from idi_ftm2j_shared.logs import get_logger
 from idi_corporate_structure.api import OpenAiClient
 from idi_corporate_structure.types import Filing, Subsidiary
 
-_PROMPTS = importlib.resources.files("idi_corporate_structure.processor.prompts")
+_PROMPTS = importlib.resources.files("idi_corporate_structure.prompts")
 
 _BLOCK_TAGS = frozenset(
     {

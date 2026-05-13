@@ -42,6 +42,7 @@ class SecClient(ApiClient):
             Dict with ``status_code``, ``url``, and ``data`` on success, plus ``error``
             on failure.
         """
+        self.rate_limit()
         return self._query_with_error_handling(
             url=sec_url,
             headers=self._sec_headers,
@@ -92,6 +93,7 @@ class OpenAiClient(ApiClient):
         if isinstance(data, dict):
             data = json.dumps(data)
 
+        self.rate_limit()
         response = self._query_with_error_handling(
             url=self.OPENAI_API_URL,
             headers=headers,

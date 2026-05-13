@@ -381,59 +381,39 @@ pipeline.py
 
 ---
 
-## Versioning & Branching
+## Development cycle
 
-Versions follow [PEP 440](https://peps.python.org/pep-0440/): `MAJOR.MINOR.PATCH[aN|rcN]`.
+Documentation governing all processors: https://github.com/dsi-clinic/idi-ftm2j-shared/tree/main#development--contributing
 
-The CI pipeline bumps the version automatically on every push. The typical release flow is:
+### CI/CD specifics
 
-```
-dev (alpha)  →  release (rc)  →  main (stable)
-0.1.0
-  └─ push to dev           →  0.1.1a1   (--bump patch --bump alpha)
-  └─ push to dev again     →  0.1.1a2   (--bump alpha)
-  └─ push to release       →  0.1.1rc1  (--bump rc)
-  └─ push to release again →  0.1.1rc2  (--bump rc)
-  └─ merge to main         →  0.1.1     (--bump stable)
-```
+**No path filtering.** `deploy.yml` runs the full job sequence on every push to `dev` or `main` regardless of what changed — there is no change-detection gate.
 
-**Branch naming:**
+**Strict job sequence.** Jobs run in order: `version` → `docker` → `deploy-pulumi` → `sync-ecr`. Each job gates the next, so a Docker build failure will block the Pulumi deploy and ECR sync.
 
-| Branch | Stage | Command |
+**Single Docker image.** Only `idi-corporate-structure-orchestrator` is built and published — to GHCR first, then re-tagged and pushed to ECR by `sync-ecr`.
+
+**Manual dispatch on issue branches.** `deploy-pulumi` and `sync-ecr` include `issue-*` in their `if` conditions. Pushes to issue branches do not trigger the workflow, but `workflow_dispatch` can be used to manually run a deploy from a feature branch — useful for testing infra changes before merging.
+
+**Required GitHub secrets.** The `deploy-pulumi` job requires the following secrets to be set in the repository. Secrets passed via `[ -n "$VAR" ]` are optional and skip silently if unset; all others are required for the deploy to succeed.
+
+| Secret | Required | Notes |
 |---|---|---|
-| `dev` | Alpha pre-release | `--bump patch --bump alpha` on first push; `--bump alpha` thereafter |
-| `release` | Release candidate | `--bump rc` (works from both alpha and existing rc) |
-| `release/X.Y.Z` | Versioned RC | Sets version explicitly to `X.Y.Zrc1` on first push; `--bump rc` thereafter |
-| `main` | Stable release | `--bump stable` (strips pre-release suffix) |
+| `AWS_ROLE_ARN_DEPLOY` | Yes | IAM role for Pulumi and ECR |
+| `AWS_REGION` | No | Defaults to `us-east-2` |
+| `PULUMI_ACCESS_TOKEN` | Yes | |
+| `PULUMI_CONFIG_PASSPHRASE` | Yes | |
+| `PULUMI_STATE_BUCKET` | Yes | S3 bucket for Pulumi state |
+| `ECR_REPOSITORY_PREFIX` | No | Defaults to `{pulumi_project}-{env}-{app_name}` |
+| `BUCKET_NAME` | No | S3 bucket for pipeline I/O |
+| `INPUT_FILE` | No | S3 path or HTTPS URL to `submissions.zip`; defaults to SEC EDGAR bulk data URL |
+| `ECS_TASK_CPU` | No | |
+| `ECS_TASK_MEMORY` | No | |
+| `API_RATE_LIMIT` | No | Seconds between SEC HTTP requests |
+| `NUM_WORKERS` | No | GPT extraction worker threads |
+| `INPUT_SAMPLE_SIZE` | No | Limit input to N filings for testing |
+| `OPENAI_API_KEY` | No | Set as a Pulumi secret in Secrets Manager |
+| `OPENAI_MODEL` | No | |
+| `SEC_USER_AGENT` | No | Set as a Pulumi secret; required by SEC EDGAR to avoid 429s |
+| `CRON` | No | EventBridge schedule expression |
 
----
-
-## Development & Contributing
-
-Install all dependency groups (includes `dev` tools: pytest, ruff):
-
-```bash
-uv sync --all-groups
-```
-
-### Tests
-
-```bash
-uv run pytest
-```
-
-### Linting & Formatting
-
-```bash
-uv run ruff check .    # lint
-uv run ruff format .   # format
-```
-
-### Code Style
-
-| Rule | Value |
-|---|---|
-| Line length | 100 characters |
-| Docstring convention | Google (`pydocstyle`) |
-| Type annotations | Required on all public functions and classes |
-| String quotes | Double-quoted (ruff `Q` ruleset) |

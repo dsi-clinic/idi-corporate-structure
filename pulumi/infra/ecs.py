@@ -1,4 +1,11 @@
-"""ECS cluster and Fargate task definition for the corporate structure processor."""
+"""ECS cluster and Fargate task definition for the corporate structure processor.
+
+
+Per-pipeline arguments (input file, type, batch size, etc.) are injected by the
+EventBridge schedules via ECS containerOverrides — see scheduling.py. The task
+definition's baseline command is `--help` so a misconfigured override fails
+loudly instead of silently running a default pipeline.
+"""
 
 import json
 
@@ -6,7 +13,7 @@ import pulumi_aws as aws
 
 import pulumi
 
-from . import config, ecr, iam, secrets
+from . import config, ecr, iam, logs, secrets
 
 # -----------------------------------------------------------------------------
 # ECS Cluster (Fargate only)
@@ -20,16 +27,6 @@ cluster = aws.ecs.Cluster(
             value="enabled",
         )
     ],
-    tags=config.tags(),
-)
-
-# -----------------------------------------------------------------------------
-# CloudWatch Log Group for awslogs driver
-# -----------------------------------------------------------------------------
-log_group = aws.cloudwatch.LogGroup(
-    "idi-ecs-log-group",
-    name=f"/ecs/{config.name_prefix}",
-    retention_in_days=config.log_retention_days,
     tags=config.tags(),
 )
 
@@ -51,7 +48,7 @@ failure_file = f"s3://{config.bucket_name}/{config.app_name}/failures/failures.j
 # Container definition as JSON (required by aws.ecs.TaskDefinition)
 container_definitions = pulumi.Output.all(
     image=ecr.orchestrator_image,
-    log_group_name=log_group.name,
+    log_group_name=logs.log_group.name,
     region=config.aws_region,
     openai_secret_arn=secrets.openai_secret.arn,
     sec_user_agent_secret_arn=secrets.sec_user_agent_secret.arn,

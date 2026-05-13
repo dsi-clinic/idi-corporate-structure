@@ -15,14 +15,10 @@ import pulumi
 from . import config, ecs, iam, networking
 
 # -----------------------------------------------------------------------------
-# Dead-Letter Queue (SQS) — catches scheduling failures
+# Shared DLQ (looked up by name — owned by a separate project/stack)
+# Required config: deploy must set `idi:shared_dlq_name` per stack.
 # -----------------------------------------------------------------------------
-dlq = aws.sqs.Queue(
-    "idi-scheduler-dlq",
-    name=f"{config.name_prefix}-scheduler-dlq",
-    message_retention_seconds=config.dlq_retention_days * 86400,
-    tags=config.tags({"purpose": "EventBridge Scheduler dead-letter queue"}),
-)
+shared_dlq = aws.sqs.get_queue_output(name=config.shared_dlq_name)
 
 # -----------------------------------------------------------------------------
 # Scheduler IAM Role — allows EventBridge to run ECS tasks and send to DLQ
@@ -52,7 +48,7 @@ scheduler_policy = aws.iam.RolePolicy(
     policy=pulumi.Output.all(
         task_execution_role_arn=iam.task_execution_role.arn,
         task_role_arn=iam.task_role.arn,
-        dlq_arn=dlq.arn,
+        dlq_arn=shared_dlq.arn,
         task_definition_arn=ecs.task_definition.arn,
     ).apply(
         lambda args: json.dumps(
@@ -119,7 +115,7 @@ schedule = aws.scheduler.Schedule(
             maximum_event_age_in_seconds=3600,
         ),
         dead_letter_config=aws.scheduler.ScheduleTargetDeadLetterConfigArgs(
-            arn=dlq.arn,
+            arn=shared_dlq.arn,
         ),
     ),
 )

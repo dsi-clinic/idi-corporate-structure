@@ -18,7 +18,7 @@ sec_user_agent = config.config.require_secret("sec_user_agent")
 openai_secret = aws.secretsmanager.Secret(
     "idi-secret-openai-api-key",
     name=f"{config.name_prefix}-openai-api-key",
-    description="OpenAI API key for GPT-based subsidiary extraction",
+    recovery_window_in_days=0,
     tags=config.tags(),
 )
 
@@ -36,6 +36,7 @@ sec_user_agent_secret = aws.secretsmanager.Secret(
     "idi-secret-sec-user-agent",
     name=f"{config.name_prefix}-sec-user-agent",
     description="SEC EDGAR User-Agent header value (Name email@example.com)",
+    recovery_window_in_days=0,
     tags=config.tags(),
 )
 

@@ -32,6 +32,8 @@ cluster = aws.ecs.Cluster(
 # -----------------------------------------------------------------------------
 # Task Definition
 # -----------------------------------------------------------------------------
+CONTAINER_NAME = "corporate-structure-orchestrator"
+
 cpu = config.config.get("cpu") or "1024"
 memory = config.config.get("memory") or "4096"
 rate_limit = config.config.get("rate_limit") or "0.2"
@@ -55,23 +57,10 @@ container_definitions = pulumi.Output.all(
     lambda args: json.dumps(
         [
             {
-                "name": "corporate-structure-orchestrator",
+                "name": CONTAINER_NAME,
                 "image": args["image"],
                 "essential": True,
-                "command": [
-                    "--input-file",
-                    input_file,
-                    "--output-file",
-                    output_file,
-                    "--failure-file",
-                    failure_file,
-                    "--rate-limit",
-                    rate_limit,
-                    "--num-workers",
-                    num_workers,
-                    "--model",
-                    openai_model,
-                ],
+                "command": ["--help"],
                 "environment": [
                     {"name": "AWS_REGION", "value": args["region"]},
                     {"name": "CLOUDWATCH_LOGS_ENABLED", "value": "false"},

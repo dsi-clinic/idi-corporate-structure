@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from idi_corporate_structure.common.api import SecClient
+from idi_corporate_structure.api import SecClient
 
 
 class TestSecClientQueryEndpoint:

@@ -9,12 +9,12 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 
-from idi_corporate_structure.processor.extractor import (
+from idi_corporate_structure.extractor import (
     ExtractionTruncatedError,
     html_to_text,
 )
-from idi_corporate_structure.processor.failures import FailureType
-from idi_corporate_structure.processor.types import Filing, Subsidiary
+from idi_corporate_structure.failures import FailureType
+from idi_corporate_structure.types import Filing, Subsidiary
 from tests.conftest import make_cik_json, make_directory_response, make_exhibit_response
 
 # ── _zip_file_data ────────────────────────────────────────────────────────────
@@ -467,7 +467,7 @@ class TestFetchExhibitContent:
         mock_pdf.__exit__ = MagicMock(return_value=False)
         mock_pdf.pages = [mock_page]
         mocker.patch(
-            "idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf
+            "idi_corporate_structure.pipeline.pdfplumber.open", return_value=mock_pdf
         )
 
         result = pipeline._fetch_exhibit_content(sample_filing, item)
@@ -486,7 +486,7 @@ class TestFetchExhibitContent:
         mock_pdf.__exit__ = MagicMock(return_value=False)
         mock_pdf.pages = [mock_page]
         mocker.patch(
-            "idi_corporate_structure.processor.pipeline.pdfplumber.open", return_value=mock_pdf
+            "idi_corporate_structure.pipeline.pdfplumber.open", return_value=mock_pdf
         )
 
         mock_warn = mocker.patch.object(pipeline.logger, "warning")
@@ -498,7 +498,7 @@ class TestFetchExhibitContent:
         item = {"name": "d12345ex21.pdf", "type": "text.gif"}
         pipeline.sec_client.query_endpoint.return_value = {"data": b"%PDF content"}
         mocker.patch(
-            "idi_corporate_structure.processor.pipeline.pdfplumber.open",
+            "idi_corporate_structure.pipeline.pdfplumber.open",
             side_effect=Exception("corrupt PDF"),
         )
 

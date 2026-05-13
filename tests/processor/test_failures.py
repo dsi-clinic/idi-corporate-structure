@@ -2,7 +2,7 @@
 
 import pytest
 
-from idi_corporate_structure.processor.failures import (
+from idi_corporate_structure.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
 )

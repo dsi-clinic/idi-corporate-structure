@@ -5,7 +5,7 @@ import zipfile
 
 import pytest
 
-from idi_corporate_structure.processor.types import (
+from idi_corporate_structure.types import (
     Filing,
     PipelineConfig,
     PipelineStats,

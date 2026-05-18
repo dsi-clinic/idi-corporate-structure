@@ -640,7 +640,7 @@ wheels = [
 
 [[package]]
 name = "idi-corporate-structure"
-version = "0.1.1a2"
+version = "0.1.1a3"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -678,7 +678,7 @@ pulumi = [
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "boto3", specifier = ">=1.42.70" },
-    { name = "idi-ftm2j-shared", git = "https://github.com/dsi-clinic/idi-ftm2j-shared.git?rev=issue-2-shared-code" },
+    { name = "idi-ftm2j-shared", git = "https://github.com/dsi-clinic/idi-ftm2j-shared.git?rev=dev" },
     { name = "pandas", specifier = ">=3.0.2" },
     { name = "pdfplumber", specifier = ">=0.11" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.10.0" },
@@ -706,8 +706,8 @@ pulumi = [
 
 [[package]]
 name = "idi-ftm2j-shared"
-version = "0.1.0"
-source = { git = "https://github.com/dsi-clinic/idi-ftm2j-shared.git?rev=issue-2-shared-code#1ee21ea772c0ff211c7754d7b26a4e6abdc74c03" }
+version = "0.1.1a1"
+source = { git = "https://github.com/dsi-clinic/idi-ftm2j-shared.git?rev=dev#c14c0c4f56701dc9b0070656517cf6d019ddb01d" }
 dependencies = [
     { name = "requests" },
     { name = "smart-open", extra = ["s3"] },

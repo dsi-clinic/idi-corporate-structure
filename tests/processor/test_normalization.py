@@ -4,7 +4,7 @@
 import pytest
 
 # Application imports
-from idi_corporate_structure.processor.normalization import (
+from idi_corporate_structure.normalization import (
     SEC_STATE_OF_INCORPORATION,
     normalize_parent_location,
     normalize_subsidiary_location,

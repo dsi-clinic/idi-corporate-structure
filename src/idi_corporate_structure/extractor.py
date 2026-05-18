@@ -9,13 +9,13 @@ from abc import ABC, abstractmethod
 
 # Third-party imports
 from bs4 import BeautifulSoup, Comment
+from idi_ftm2j_shared.logs import get_logger
 
 # Application imports
-from idi_corporate_structure.common.api import OpenAiClient
-from idi_corporate_structure.common.logs import get_logger
-from idi_corporate_structure.processor.types import Filing, Subsidiary
+from idi_corporate_structure.api import OpenAiClient
+from idi_corporate_structure.types import Filing, Subsidiary
 
-_PROMPTS = importlib.resources.files("idi_corporate_structure.processor.prompts")
+_PROMPTS = importlib.resources.files("idi_corporate_structure.prompts")
 
 _BLOCK_TAGS = frozenset(
     {
@@ -105,7 +105,7 @@ class GptExtractor(Extractor):
         """
         self._openai_client = OpenAiClient(api_key=openai_api_key)
         self._model = model or self._DEFAULT_MODEL
-        self._logger = get_logger(__name__)
+        self._logger = get_logger(type(self).__name__)
 
     def _extract_with_chunking(self, doc_text: str, company_name: str) -> tuple[list[dict], int]:
         """Run extraction one-shot, falling back to chunked extraction if needed.

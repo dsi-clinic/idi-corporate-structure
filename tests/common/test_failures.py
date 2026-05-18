@@ -3,8 +3,9 @@
 import json
 import threading
 
-from idi_corporate_structure.common.failures import FailureRegistry
-from idi_corporate_structure.processor.failures import (
+from idi_ftm2j_shared.failures import FailureRegistry
+
+from idi_corporate_structure.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
 )

@@ -15,14 +15,10 @@ import pulumi
 from . import config, ecs, iam, networking
 
 # -----------------------------------------------------------------------------
-# Dead-Letter Queue (SQS) — catches scheduling failures
+# Shared DLQ (looked up by name — owned by a separate project/stack)
+# Required config: deploy must set `idi:shared_dlq_name` per stack.
 # -----------------------------------------------------------------------------
-dlq = aws.sqs.Queue(
-    "idi-scheduler-dlq",
-    name=f"{config.name_prefix}-scheduler-dlq",
-    message_retention_seconds=config.dlq_retention_days * 86400,
-    tags=config.tags({"purpose": "EventBridge Scheduler dead-letter queue"}),
-)
+shared_dlq = aws.sqs.get_queue_output(name=config.shared_dlq_name)
 
 # -----------------------------------------------------------------------------
 # Scheduler IAM Role — allows EventBridge to run ECS tasks and send to DLQ
@@ -52,7 +48,7 @@ scheduler_policy = aws.iam.RolePolicy(
     policy=pulumi.Output.all(
         task_execution_role_arn=iam.task_execution_role.arn,
         task_role_arn=iam.task_role.arn,
-        dlq_arn=dlq.arn,
+        dlq_arn=shared_dlq.arn,
         task_definition_arn=ecs.task_definition.arn,
     ).apply(
         lambda args: json.dumps(
@@ -90,6 +86,32 @@ scheduler_policy = aws.iam.RolePolicy(
 schedule_expression = config.config.get("cron_corporate_structure") or "cron(0 2 * * ? *)"
 schedule_enabled = (config.config.get("schedule_enabled") or "false") == "true"
 
+_CONTAINER_NAME = ecs.CONTAINER_NAME
+
+
+def _container_override_input() -> str:
+    """Build the EventBridge Scheduler `input` JSON for an ECS containerOverride.
+
+    Mirrors the command in the task definition so the schedule drives execution
+    with the same arguments. All values resolve to plain strings at plan time.
+    """
+    command = [
+        "--input-file",
+        ecs.input_file,
+        "--output-file",
+        ecs.output_file,
+        "--failure-file",
+        ecs.failure_file,
+        "--rate-limit",
+        ecs.rate_limit,
+        "--num-workers",
+        ecs.num_workers,
+        "--model",
+        ecs.openai_model,
+    ]
+    return json.dumps({"containerOverrides": [{"name": _CONTAINER_NAME, "command": command}]})
+
+
 schedule = aws.scheduler.Schedule(
     "idi-schedule-corporate-structure",
     name=f"{config.name_prefix}-schedule",
@@ -102,6 +124,7 @@ schedule = aws.scheduler.Schedule(
     target=aws.scheduler.ScheduleTargetArgs(
         arn=ecs.cluster.arn,
         role_arn=scheduler_role.arn,
+        input=_container_override_input(),
         ecs_parameters=aws.scheduler.ScheduleTargetEcsParametersArgs(
             task_definition_arn=ecs.task_definition.arn,
             launch_type="FARGATE",
@@ -119,7 +142,7 @@ schedule = aws.scheduler.Schedule(
             maximum_event_age_in_seconds=3600,
         ),
         dead_letter_config=aws.scheduler.ScheduleTargetDeadLetterConfigArgs(
-            arn=dlq.arn,
+            arn=shared_dlq.arn,
         ),
     ),
 )

@@ -1,6 +1,6 @@
 """Tests for the html_to_text helper in processor.extractor."""
 
-from idi_corporate_structure.processor.extractor import html_to_text
+from idi_corporate_structure.extractor import html_to_text
 
 
 class TestHtmlToText:

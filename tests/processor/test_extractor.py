@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from idi_corporate_structure.processor.extractor import (
+from idi_corporate_structure.extractor import (
     ExtractionTimeoutError,
     ExtractionTruncatedError,
     GptExtractor,
     html_to_text,
 )
-from idi_corporate_structure.processor.types import Subsidiary
+from idi_corporate_structure.types import Subsidiary
 from tests.conftest import make_exhibit_response
 
 _FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -440,14 +440,14 @@ class TestGptExtractor:
 
     def test_is_name_in_document_normalizes_whitespace(self):
         """_is_name_in_document matches despite whitespace differences."""
-        from idi_corporate_structure.processor.extractor import _is_name_in_document
+        from idi_corporate_structure.extractor import _is_name_in_document
 
         doc = "Apple  Operations   LLC\n(Delaware)"
         assert _is_name_in_document("Apple Operations LLC", doc)
 
     def test_is_name_in_document_rejects_missing_name(self):
         """_is_name_in_document returns False when the name is absent."""
-        from idi_corporate_structure.processor.extractor import _is_name_in_document
+        from idi_corporate_structure.extractor import _is_name_in_document
 
         assert not _is_name_in_document("Ghost Corp", "Apple Operations LLC (Delaware)")
 
@@ -456,7 +456,7 @@ class TestChunkDocument:
     """Tests for the _chunk_document splitter."""
 
     def test_small_doc_returns_single_chunk(self):
-        from idi_corporate_structure.processor.extractor import _chunk_document
+        from idi_corporate_structure.extractor import _chunk_document
 
         text = "small doc"
         chunks = _chunk_document(text, max_chars=1000, overlap_chars=100)
@@ -464,7 +464,7 @@ class TestChunkDocument:
         assert chunks == [text]
 
     def test_large_doc_returns_multiple_chunks(self):
-        from idi_corporate_structure.processor.extractor import _chunk_document
+        from idi_corporate_structure.extractor import _chunk_document
 
         paragraphs = [f"para{i} " + "x" * 100 for i in range(20)]
         text = "\n\n".join(paragraphs)
@@ -476,7 +476,7 @@ class TestChunkDocument:
             assert len(c) <= 500 + 50
 
     def test_chunks_split_on_paragraph_boundaries(self):
-        from idi_corporate_structure.processor.extractor import _chunk_document
+        from idi_corporate_structure.extractor import _chunk_document
 
         paragraphs = [f"Paragraph {i}" for i in range(50)]
         text = "\n\n".join(paragraphs)
@@ -495,7 +495,7 @@ class TestChunkDocument:
         Each non-first chunk starts with one or more complete paragraphs that
         also appeared at the end of the previous chunk.
         """
-        from idi_corporate_structure.processor.extractor import _chunk_document
+        from idi_corporate_structure.extractor import _chunk_document
 
         paragraphs = [f"para{i}_" + "x" * 100 for i in range(15)]
         text = "\n\n".join(paragraphs)
@@ -513,7 +513,7 @@ class TestChunkDocument:
             )
 
     def test_oversized_paragraph_emitted_as_own_chunk(self):
-        from idi_corporate_structure.processor.extractor import _chunk_document
+        from idi_corporate_structure.extractor import _chunk_document
 
         text = "small\n\n" + "x" * 5000 + "\n\nsmall"
         chunks = _chunk_document(text, max_chars=1000, overlap_chars=100)
@@ -528,7 +528,7 @@ class TestChunkDocument:
         them to enumerate >75 short rows, even if the chunk easily fits in the
         char window. This test pins the entry cap as a separate dimension.
         """
-        from idi_corporate_structure.processor.extractor import _chunk_document
+        from idi_corporate_structure.extractor import _chunk_document
 
         paragraphs = [f"Para{i}" for i in range(200)]
         text = "\n\n".join(paragraphs)
@@ -543,7 +543,7 @@ class TestChunkDocument:
 
     def test_max_entries_disabled_when_none(self):
         """``max_entries=None`` reproduces the legacy char-only behaviour."""
-        from idi_corporate_structure.processor.extractor import _chunk_document
+        from idi_corporate_structure.extractor import _chunk_document
 
         paragraphs = [f"Para{i}" for i in range(200)]
         text = "\n\n".join(paragraphs)
@@ -607,8 +607,8 @@ class TestExtractWithChunking:
         """A doc under the preemptive threshold but that one-shot-truncates falls back to chunking."""
         # Push the preemptive threshold high so this doc skips preemptive chunking,
         # but keep the per-chunk max smaller so the retry path produces multiple chunks.
-        mocker.patch("idi_corporate_structure.processor.extractor._CHUNK_THRESHOLD_CHARS", 100_000)
-        mocker.patch("idi_corporate_structure.processor.extractor._CHUNK_MAX_CHARS", 2_000)
+        mocker.patch("idi_corporate_structure.extractor._CHUNK_THRESHOLD_CHARS", 100_000)
+        mocker.patch("idi_corporate_structure.extractor._CHUNK_MAX_CHARS", 2_000)
 
         extractor = GptExtractor(openai_api_key="fake-key")
         call_log = []
@@ -727,7 +727,7 @@ class TestPerChunkYieldLogging:
             },
         )
 
-        with caplog.at_level(logging.INFO, logger="idi_corporate_structure.processor.extractor"):
+        with caplog.at_level(logging.INFO, logger="idi_corporate_structure.extractor"):
             _, _, _, num_chunks = extractor.extract(sample_filing, self._build_chunked_doc())
 
         yield_lines = [r for r in caplog.records if "input rows" in r.getMessage()]
@@ -753,7 +753,7 @@ class TestPerChunkYieldLogging:
             },
         )
 
-        with caplog.at_level(logging.WARNING, logger="idi_corporate_structure.processor.extractor"):
+        with caplog.at_level(logging.WARNING, logger="idi_corporate_structure.extractor"):
             extractor.extract(sample_filing, self._build_chunked_doc())
 
         warnings = [
@@ -782,7 +782,7 @@ class TestPerChunkYieldLogging:
 
         mocker.patch.object(extractor, "_summarize", side_effect=echo)
 
-        with caplog.at_level(logging.WARNING, logger="idi_corporate_structure.processor.extractor"):
+        with caplog.at_level(logging.WARNING, logger="idi_corporate_structure.extractor"):
             extractor.extract(sample_filing, self._build_chunked_doc())
 
         warnings = [
@@ -963,42 +963,42 @@ class TestCleanName:
     """Tests for _clean_name — invisible-character stripping and NBSP normalisation."""
 
     def test_nbsp_replaced_with_space(self):
-        from idi_corporate_structure.processor.extractor import _clean_name
+        from idi_corporate_structure.extractor import _clean_name
 
         assert _clean_name("ASM\xa0Services") == "ASM Services"
 
     def test_zwnj_stripped(self):
-        from idi_corporate_structure.processor.extractor import _clean_name
+        from idi_corporate_structure.extractor import _clean_name
 
         assert _clean_name("Silex Spain, S.L.\u200c") == "Silex Spain, S.L."
 
     def test_zwsp_stripped(self):
-        from idi_corporate_structure.processor.extractor import _clean_name
+        from idi_corporate_structure.extractor import _clean_name
 
         assert _clean_name("Golden\u200bMinerals") == "GoldenMinerals"
 
     def test_zwj_stripped(self):
-        from idi_corporate_structure.processor.extractor import _clean_name
+        from idi_corporate_structure.extractor import _clean_name
 
         assert _clean_name("Corp\u200d Ltd") == "Corp Ltd"
 
     def test_bom_stripped(self):
-        from idi_corporate_structure.processor.extractor import _clean_name
+        from idi_corporate_structure.extractor import _clean_name
 
         assert _clean_name("\ufeffHoldings Inc.") == "Holdings Inc."
 
     def test_html_entities_decoded(self):
-        from idi_corporate_structure.processor.extractor import _clean_name
+        from idi_corporate_structure.extractor import _clean_name
 
         assert _clean_name("Johnson &amp; Johnson") == "Johnson & Johnson"
 
     def test_double_spaces_collapsed(self):
-        from idi_corporate_structure.processor.extractor import _clean_name
+        from idi_corporate_structure.extractor import _clean_name
 
         assert _clean_name("A\xa0 B") == "A B"
 
     def test_real_world_golden_minerals_example(self):
-        from idi_corporate_structure.processor.extractor import _clean_name
+        from idi_corporate_structure.extractor import _clean_name
 
         dirty = "ASM Services\xa0S.a\xa0r.l.\u200c"
         assert _clean_name(dirty) == "ASM Services S.a r.l."
@@ -1008,7 +1008,7 @@ class TestCompactGroundingFallback:
     """Tests for _compact and the compact fallback in _is_name_in_document."""
 
     def test_compact_lowercases_and_strips_punctuation(self):
-        from idi_corporate_structure.processor.extractor import _compact
+        from idi_corporate_structure.extractor import _compact
 
         assert (
             _compact("Johnson & Johnson (Singapore) HoldCo LLC")
@@ -1016,47 +1016,47 @@ class TestCompactGroundingFallback:
         )
 
     def test_strict_match_still_works(self):
-        from idi_corporate_structure.processor.extractor import _is_name_in_document
+        from idi_corporate_structure.extractor import _is_name_in_document
 
         doc = "ABD Holding Company, Inc. (Delaware)"
         assert _is_name_in_document("ABD Holding Company, Inc.", doc)
 
     def test_jnj_singapore_matches_via_fallback(self):
         """Model dropped the parens around 'Singapore' — compact fallback recovers it."""
-        from idi_corporate_structure.processor.extractor import _is_name_in_document
+        from idi_corporate_structure.extractor import _is_name_in_document
 
         doc = "Johnson & Johnson (Singapore) HoldCo LLC, a Delaware corporation"
         assert _is_name_in_document("Johnson & Johnson Singapore HoldCo LLC", doc)
 
     def test_jnj_healthcare_matches_via_fallback(self):
         """Model merged 'Health Care' into 'Healthcare' — compact fallback recovers it."""
-        from idi_corporate_structure.processor.extractor import _is_name_in_document
+        from idi_corporate_structure.extractor import _is_name_in_document
 
         doc = "Johnson & Johnson Health Care Systems Inc. (New Jersey)"
         assert _is_name_in_document("Johnson & Johnson Healthcare Systems Inc.", doc)
 
     def test_empty_name_returns_false(self):
-        from idi_corporate_structure.processor.extractor import _is_name_in_document
+        from idi_corporate_structure.extractor import _is_name_in_document
 
         assert not _is_name_in_document("", "some document text")
 
     def test_hallucinated_name_still_returns_false(self):
         """A name with no compact substring match is correctly rejected."""
-        from idi_corporate_structure.processor.extractor import _is_name_in_document
+        from idi_corporate_structure.extractor import _is_name_in_document
 
         doc = "Johnson & Johnson Health Care Systems Inc. (New Jersey)"
         assert not _is_name_in_document("Completely Made Up Pharma Corp", doc)
 
     def test_no_false_match_on_unrelated_name(self):
         """A name with no compact substring match is correctly rejected."""
-        from idi_corporate_structure.processor.extractor import _is_name_in_document
+        from idi_corporate_structure.extractor import _is_name_in_document
 
         doc = "Pineapple Holdings Ltd (California)"
         assert not _is_name_in_document("Acme Corporation", doc)
 
     def test_compact_fallback_logs_debug(self, mocker):
         """When the compact path fires, a DEBUG message is emitted."""
-        from idi_corporate_structure.processor import extractor as ext_mod
+        from idi_corporate_structure import extractor as ext_mod
 
         mock_logger = mocker.patch.object(ext_mod, "get_logger")
         mock_log_instance = mock_logger.return_value
@@ -1114,13 +1114,13 @@ class TestTakeOverlap:
     """Tests for _take_overlap (paragraph-aligned chunk overlap)."""
 
     def test_returns_empty_when_overlap_is_zero(self):
-        from idi_corporate_structure.processor.extractor import _take_overlap
+        from idi_corporate_structure.extractor import _take_overlap
 
         assert _take_overlap("anything\n\nelse", overlap_chars=0) == ""
 
     def test_returns_only_whole_paragraphs(self):
         """Overlap never includes a partial paragraph, even if a whole one exceeds the budget."""
-        from idi_corporate_structure.processor.extractor import _take_overlap
+        from idi_corporate_structure.extractor import _take_overlap
 
         text = "para1\n\npara2\n\nlongest_paragraph_with_lots_of_content"
         overlap = _take_overlap(text, overlap_chars=20)
@@ -1129,7 +1129,7 @@ class TestTakeOverlap:
         assert overlap == "longest_paragraph_with_lots_of_content"
 
     def test_takes_multiple_paragraphs_within_budget(self):
-        from idi_corporate_structure.processor.extractor import _take_overlap
+        from idi_corporate_structure.extractor import _take_overlap
 
         text = "para1\n\npara2\n\npara3\n\npara4"
         overlap = _take_overlap(text, overlap_chars=100)
@@ -1139,7 +1139,7 @@ class TestTakeOverlap:
 
     def test_no_partial_word_at_overlap_boundary(self):
         """Regression test for the Transco 'Eight Project LLC' bug: overlap never bisects a name."""
-        from idi_corporate_structure.processor.extractor import _take_overlap
+        from idi_corporate_structure.extractor import _take_overlap
 
         text = (
             "Perryville Gas Storage LLC Delaware\n\n"

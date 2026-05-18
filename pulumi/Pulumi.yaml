@@ -62,9 +62,8 @@ config:
     description: CloudWatch log group retention in days
     default: "30"
 
-  idi:dlq_retention_days:
-    description: SQS dead-letter queue retention in days
-    default: "14"
+  idi:shared_dlq_name:
+    description: Name of the shared scheduler DLQ owned by idi-corporate-structure
 
   idi:ecr_image_count:
     description: ECR image retention count

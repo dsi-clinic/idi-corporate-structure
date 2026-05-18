@@ -15,29 +15,29 @@ from abc import ABC, abstractmethod
 # Third party imports
 import pandas as pd
 import pdfplumber
+from idi_ftm2j_shared.api import SecClient
+from idi_ftm2j_shared.failures import FailureRegistry
+from idi_ftm2j_shared.logs import get_logger
+from idi_ftm2j_shared.storage import open_zip
 from tqdm import tqdm
 
 # Application imports
-from idi_corporate_structure.common.api import SecClient
-from idi_corporate_structure.common.failures import FailureRegistry
-from idi_corporate_structure.common.logs import get_logger
-from idi_corporate_structure.common.storage import open_zip
-from idi_corporate_structure.processor.extractor import (
+from idi_corporate_structure.extractor import (
     DocumentError,
     ExtractionTimeoutError,
     ExtractionTruncatedError,
     GptExtractor,
     html_to_text,
 )
-from idi_corporate_structure.processor.failures import (
+from idi_corporate_structure.failures import (
     CorporateStructureFailureClassifier,
     FailureType,
 )
-from idi_corporate_structure.processor.normalization import (
+from idi_corporate_structure.normalization import (
     normalize_parent_location,
     normalize_subsidiary_location,
 )
-from idi_corporate_structure.processor.types import (
+from idi_corporate_structure.types import (
     SUPPORTED_EXHIBIT_EXTENSIONS,
     Filing,
     PipelineConfig,

@@ -7,8 +7,6 @@ on:
     branches:
       - main
       - dev
-      - release
-      - 'release/**'
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -68,10 +66,6 @@ jobs:
             uv version --bump patch --bump alpha
           fi
 
-      - name: Bump rc version (release branch)
-        if: startsWith(github.ref, 'refs/heads/release')
-        run: uv version --bump rc
-
       - name: Bump stable version (main branch)
         if: github.ref == 'refs/heads/main'
         run: uv version --bump stable
@@ -105,7 +99,7 @@ jobs:
           generateReleaseNotes: true
           name: v${{ steps.set-version.outputs.version }}
           tag: v${{ steps.set-version.outputs.version }}
-          prerelease: ${{ github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/heads/release') }}
+          prerelease: ${{ github.ref == 'refs/heads/dev' }}
 
       - name: Save outputs
         id: output
@@ -171,7 +165,6 @@ jobs:
     if: |
       github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev' ||
-      startsWith(github.ref, 'refs/heads/release') ||
       startsWith(github.ref, 'refs/heads/issue-')
     defaults:
       run:
@@ -190,6 +183,7 @@ jobs:
       OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
       CRON: ${{ secrets.CRON }}
+      SHARED_DLQ_NAME: ${{ secrets.SHARED_DLQ_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -228,6 +222,7 @@ jobs:
           [ -n "$OPENAI_MODEL" ] && pulumi config set idi:openai_model "$OPENAI_MODEL"
           [ -n "$SEC_USER_AGENT" ] && pulumi config set --secret idi:sec_user_agent "$SEC_USER_AGENT"
           [ -n "$CRON" ] && pulumi config set idi:cron_corporate_structure "$CRON"
+          [ -n "$SHARED_DLQ_NAME" ] && pulumi config set idi:shared_dlq_name "$SHARED_DLQ_NAME"
 
       - name: Pulumi deploy
         run: |
@@ -245,7 +240,6 @@ jobs:
     if: |
       github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev' ||
-      startsWith(github.ref, 'refs/heads/release') ||
       startsWith(github.ref, 'refs/heads/issue-')
     defaults:
       run:

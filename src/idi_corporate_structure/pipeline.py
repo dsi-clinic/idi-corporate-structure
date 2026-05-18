@@ -15,13 +15,13 @@ from abc import ABC, abstractmethod
 # Third party imports
 import pandas as pd
 import pdfplumber
+from idi_ftm2j_shared.api import SecClient
 from idi_ftm2j_shared.failures import FailureRegistry
 from idi_ftm2j_shared.logs import get_logger
 from idi_ftm2j_shared.storage import open_zip
 from tqdm import tqdm
 
 # Application imports
-from idi_corporate_structure.api import SecClient
 from idi_corporate_structure.extractor import (
     DocumentError,
     ExtractionTimeoutError,

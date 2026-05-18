@@ -4,8 +4,8 @@ import zipfile
 from unittest.mock import MagicMock
 
 import pytest
+from idi_ftm2j_shared.api import SecClient
 
-from idi_corporate_structure.api import SecClient
 from idi_corporate_structure.extractor import GptExtractor
 from idi_corporate_structure.pipeline import SubsidiaryPipeline
 from idi_corporate_structure.types import Filing, PipelineConfig

@@ -11,8 +11,10 @@ import argparse
 import datetime
 import os
 
+# Third party imports
+from idi_ftm2j_shared.api import SecClient
+
 # Application imports
-from idi_corporate_structure.api import SecClient
 from idi_corporate_structure.extractor import GptExtractor
 from idi_corporate_structure.pipeline import SubsidiaryPipeline
 from idi_corporate_structure.types import PipelineConfig

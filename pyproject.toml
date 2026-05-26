@@ -8,7 +8,7 @@ packages = ["src/idi_corporate_structure"]
 
 [project]
 name = "idi-corporate-structure"
-version = "0.1.1a3"
+version = "0.1.1a4"
 description = "Retrieves subsidiary information from the SEC"
 readme = "README.md"
 requires-python = ">=3.13"

@@ -640,7 +640,7 @@ wheels = [
 
 [[package]]
 name = "idi-corporate-structure"
-version = "0.1.1a3"
+version = "0.1.1a4"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },

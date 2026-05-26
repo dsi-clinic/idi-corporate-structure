@@ -15,7 +15,7 @@ requires-python = ">=3.13"
 dependencies = [
     "beautifulsoup4>=4.12",
     "boto3>=1.42.70",
-    "idi-ftm2j-shared",
+    "idi-ftm2j-shared>=0.1.3",
     "pandas>=3.0.2",
     "pdfplumber>=0.11",
     "pyarrow>=23.0.1",
@@ -97,6 +97,3 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
-
-[tool.uv.sources]
-idi-ftm2j-shared = { git = "https://github.com/dsi-clinic/idi-ftm2j-shared.git", rev = "dev" }

@@ -1,5 +1,6 @@
-# Quality checks: runs on every PR and must pass before merge.
-# Each job is a separate required status check for granular visibility.
+# PR quality gate. Thin caller of the shared composition pipeline-checks.yml
+# (lint, test, security, pulumi preview), pinned to an exact release of
+# dsi-clinic/idi-ftm2j-shared. Bump the @vX.Y.Z pin to upgrade.
 name: Checks
 
 on:
@@ -7,8 +8,6 @@ on:
     branches:
       - main
       - dev
-      - release
-      - 'release/**'
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -18,143 +17,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  PROJECT_DIR: .
-  APP_NAME: corporate-structure
+permissions:
+  contents: read
+  id-token: write          # OIDC for the pulumi preview role
+  security-events: write   # CodeQL upload
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.PROJECT_DIR }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
-          python-version: "3.13"
-
-      - name: Install dependencies
-        run: uv sync --all-extras --all-groups
-
-      - name: Lint (ruff)
-        run: uv run ruff check . --output-format=concise
-
-      - name: Format check (ruff)
-        run: uv run ruff format --check .
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.PROJECT_DIR }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
-          python-version: "3.13"
-
-      - name: Install dependencies
-        run: uv sync --all-extras --all-groups
-
-      - name: Run tests with coverage
-        run: uv run pytest --cov=${{ env.APP_NAME }} --cov-report=xml:coverage.xml --cov-report=term -v
-
-  security:
-    name: Security
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-    defaults:
-      run:
-        working-directory: ${{ env.PROJECT_DIR }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
-          python-version: "3.13"
-
-      - name: Install dependencies
-        run: uv sync --all-extras --all-groups
-
-      - name: Dependency vulnerability scan (pip-audit)
-        run: |
-          uv pip install pip-audit
-          uv run pip-audit --desc --ignore-vuln CVE-2026-3219  # Pip vulnerability, no current fix
-
-      - name: CodeQL Analysis Init
-        uses: github/codeql-action/init@v4
-        with:
-          languages: python
-
-      - name: CodeQL Analysis Analyze
-        uses: github/codeql-action/analyze@v4
-
-  pulumi-preview:
-    name: Pulumi Preview
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write    # This is required for requesting JWT
-      contents: read     # This is required for actions/checkout
-    defaults:
-      run:
-        working-directory: ${{ env.PROJECT_DIR }}
-    env:
-      PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-      PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
-      IDI_BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
-      IDI_SHARED_DLQ_NAME: ${{ secrets.SHARED_DLQ_NAME }}
-      IDI_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      IDI_SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
-          python-version: "3.13"
-
-      - name: Install Pulumi dependencies
-        run: uv sync --group pulumi
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_CHECKS }}
-          role-session-name: idi-github-ci
-          aws-region: ${{ secrets.AWS_REGION || 'us-east-2' }}
-
-      - name: Set Pulumi stack
-        id: stack
-        run: |
-          if [ "${{ github.base_ref }}" = "main" ]; then
-            echo "name=prod" >> $GITHUB_OUTPUT
-          else
-            echo "name=dev" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Pulumi preview (${{ steps.stack.outputs.name }} stack)
-        run: |
-          cd pulumi
-          pulumi login s3://${{ secrets.PULUMI_STATE_BUCKET }}
-          pulumi stack select ${{ steps.stack.outputs.name }} 2>/dev/null || pulumi stack init ${{ steps.stack.outputs.name }}
-          pulumi config set aws:region ${{ secrets.AWS_REGION || 'us-east-2' }}
-          pulumi config set idi:app_name ${{ env.APP_NAME }}
-          [ -n "$IDI_BUCKET_NAME" ] && pulumi config set idi:bucket_name "$IDI_BUCKET_NAME"
-          [ -n "$IDI_SHARED_DLQ_NAME" ] && pulumi config set idi:shared_dlq_name "$IDI_SHARED_DLQ_NAME"
-          [ -n "$IDI_OPENAI_API_KEY" ] && pulumi config set --secret idi:openai_api_key "$IDI_OPENAI_API_KEY"
-          [ -n "$IDI_SEC_USER_AGENT" ] && pulumi config set --secret idi:sec_user_agent "$IDI_SEC_USER_AGENT"
-          uv run pulumi preview --non-interactive
+  checks:
+    uses: dsi-clinic/idi-ftm2j-shared/.github/workflows/pipeline-checks.yml@v0.1.8
+    secrets: inherit
+    with:
+      app-name: corporate-structure
+      cov-package: idi_corporate_structure

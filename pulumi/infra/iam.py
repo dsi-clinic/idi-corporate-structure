@@ -150,7 +150,7 @@ task_role = aws.iam.Role(
 
 # -----------------------------------------------------------------------------
 # S3 bucket (looked up by name — owned by a separate project/stack)
-# Required config: deploy must set `idi:bucket_name` per stack.
+# Name comes from SSM (/idi/<stack>/shared/processor_bucket_name) via config.
 # -----------------------------------------------------------------------------
 bucket = aws.s3.get_bucket_output(bucket=config.bucket_name)
 

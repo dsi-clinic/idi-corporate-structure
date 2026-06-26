@@ -41,8 +41,12 @@ num_workers = config.config.get("num_workers") or "10"
 input_sample_size = config.config.get("input_sample_size") or "0"
 openai_model = config.config.get("openai_model") or "gpt-4.1-nano"
 
-# Build S3 paths from externally managed bucket (name from config)
-input_file = config.config.require("input_file")
+# Build S3 paths from the externally managed bucket (name from SSM via config).
+# input_file is a bucket-relative key resolved against config.bucket_name, unless
+# it already carries a URI scheme (e.g. an https:// SEC EDGAR URL), in which case
+# it is used as-is.
+_input = config.config.require("input_file")
+input_file = _input if "://" in _input else f"s3://{config.bucket_name}/{_input}"
 output_file = f"s3://{config.bucket_name}/{config.app_name}/output/subsidiaries.parquet"
 failure_file = f"s3://{config.bucket_name}/{config.app_name}/failures/failures.json"
 

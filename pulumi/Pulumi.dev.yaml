@@ -10,8 +10,8 @@
 #   - bucket_name / shared_dlq_name -> read from the shared stack via SSM
 #   - idi:app_name, aws:region      -> set by the deploy workflow
 config:
-  idi:input_file: "<REQUIRED: input path the orchestrator reads, e.g. companies.csv>"
-  idi:sec_user_agent: "<REQUIRED: SEC EDGAR contact, e.g. 'IDI Clinic data@uchicago.edu'>"
+  idi:input_file: "corporate-structure/input/submissions.zip"
+  idi:sec_user_agent: "DSI Core Facility dsicorefacility_project8@uchicago.edu"
   idi:cpu: "1024"
   idi:memory: "4096"
   idi:rate_limit: "0.2"
@@ -20,3 +20,4 @@ config:
   idi:openai_model: "gpt-4.1-nano"
   idi:cron_corporate_structure: "cron(0 2 * * ? *)"
   idi:schedule_enabled: "false"
+encryptionsalt: v1:uKxVenI8WgM=:v1:5ajyGs6YbyaNcfbG:py0R99X0KpYgqChIsEdY4/BjuXryLA==

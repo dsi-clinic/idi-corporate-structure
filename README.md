@@ -193,7 +193,6 @@ cd pulumi/
 # First-time setup
 uv run --group pulumi pulumi stack init dev
 uv run --group pulumi pulumi config set aws:region us-east-2
-uv run --group pulumi pulumi config set idi:bucket_name <bucket>
 uv run --group pulumi pulumi config set --secret idi:openai_api_key <key>
 
 # Deploy
@@ -206,9 +205,8 @@ uv run --group pulumi pulumi up
 |---|---|---|
 | `aws:region` | `us-east-2` | AWS region |
 | `idi:app_name` | `corporate-structure` | Application name used in resource naming |
-| `idi:bucket_name` | — | S3 bucket for input, output, and failures (created externally) |
 | `idi:openai_api_key` | — | OpenAI API key (secret; stored in Secrets Manager) |
-| `idi:input_file` | SEC EDGAR HTTPS URL | Input file path (S3 URI or HTTPS URL) |
+| `idi:input_file` | SEC EDGAR HTTPS URL | Input path: a bucket-relative key (resolved against the shared bucket) or a full `s3://`/`https://` URI |
 | `idi:cron_corporate_structure` | `cron(0 2 * * ? *)` | EventBridge schedule expression |
 | `idi:schedule_enabled` | `false` | Enable the EventBridge schedule |
 | `idi:cpu` | `1024` | Fargate task CPU units |

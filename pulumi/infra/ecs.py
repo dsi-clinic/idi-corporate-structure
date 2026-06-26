@@ -41,8 +41,12 @@ num_workers = config.config.get("num_workers") or "10"
 input_sample_size = config.config.get("input_sample_size") or "0"
 openai_model = config.config.get("openai_model") or "gpt-4.1-nano"
 
-# Build S3 paths from externally managed bucket (name from config)
-input_file = config.config.require("input_file")
+# Build S3 paths from the externally managed bucket (name from SSM via config).
+# input_file is a bucket-relative key resolved against config.bucket_name, unless
+# it already carries a URI scheme (e.g. an https:// SEC EDGAR URL), in which case
+# it is used as-is.
+_input = config.config.require("input_file")
+input_file = _input if "://" in _input else f"s3://{config.bucket_name}/{_input}"
 output_file = f"s3://{config.bucket_name}/{config.app_name}/output/subsidiaries.parquet"
 failure_file = f"s3://{config.bucket_name}/{config.app_name}/failures/failures.json"
 
@@ -51,8 +55,7 @@ container_definitions = pulumi.Output.all(
     image=ecr.orchestrator_image,
     log_group_name=logs.log_group.name,
     region=config.aws_region,
-    openai_secret_arn=secrets.openai_secret.arn,
-    sec_user_agent_secret_arn=secrets.sec_user_agent_secret.arn,
+    openai_secret_arn=secrets.openai_api_key_param.arn,
 ).apply(
     lambda args: json.dumps(
         [
@@ -66,15 +69,12 @@ container_definitions = pulumi.Output.all(
                     {"name": "CLOUDWATCH_LOGS_ENABLED", "value": "false"},
                     {"name": "INPUT_SAMPLE_SIZE", "value": input_sample_size},
                     {"name": "PYTHONUNBUFFERED", "value": "1"},
+                    {"name": "SEC_USER_AGENT", "value": config.sec_user_agent},
                 ],
                 "secrets": [
                     {
                         "name": "OPENAI_API_KEY",
                         "valueFrom": args["openai_secret_arn"],
-                    },
-                    {
-                        "name": "SEC_USER_AGENT",
-                        "valueFrom": args["sec_user_agent_secret_arn"],
                     },
                 ],
                 "logConfiguration": {

@@ -39,9 +39,9 @@ pulumi.export("ecs_cluster_name", ecs.cluster.name)
 pulumi.export("task_definition_arn", ecs.task_definition.arn)
 pulumi.export("log_group_name", logs.log_group.name)
 
-# Secrets
-pulumi.export("openai_secret_arn", secrets.openai_secret.arn)
-pulumi.export("openai_secret_name", secrets.openai_secret.name)
+# Secrets (SSM SecureString — value set out-of-band)
+pulumi.export("openai_api_key_param_arn", secrets.openai_api_key_param.arn)
+pulumi.export("openai_api_key_param_name", secrets.openai_api_key_param.name)
 
 # Scheduling
 pulumi.export("schedule_name", scheduling.schedule.name)

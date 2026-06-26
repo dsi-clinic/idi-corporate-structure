@@ -16,7 +16,7 @@ from . import config, ecs, iam, networking
 
 # -----------------------------------------------------------------------------
 # Shared DLQ (looked up by name — owned by a separate project/stack)
-# Required config: deploy must set `idi:shared_dlq_name` per stack.
+# Name comes from SSM (/idi/<stack>/shared/dlq_name) via config.
 # -----------------------------------------------------------------------------
 shared_dlq = aws.sqs.get_queue_output(name=config.shared_dlq_name)
 

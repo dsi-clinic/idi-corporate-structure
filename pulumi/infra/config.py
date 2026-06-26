@@ -12,11 +12,14 @@ project_name = pulumi.get_project()
 app_name = config.get("app_name") or "corporate-structure"
 stack_name = pulumi.get_stack()
 name_prefix = f"{project_name}-{stack_name}-{app_name}"
-bucket_name = config.require("bucket_name")
+# Shared values are published by the shared stack to SSM (/idi/<stack>/shared/*)
+# and read here.
+bucket_name = aws.ssm.get_parameter(name=f"/idi/{stack_name}/shared/processor_bucket_name").value
+shared_dlq_name = aws.ssm.get_parameter(name=f"/idi/{stack_name}/shared/dlq_name").value
 log_retention_days = int(config.get("log_retention_days") or "30")
 dlq_retention_days = int(config.get("dlq_retention_days") or "14")
 ecr_image_count = int(config.get("ecr_image_count") or "5")
-shared_dlq_name = config.require("shared_dlq_name")
+sec_user_agent = config.require("sec_user_agent")
 
 # AWS
 aws_config = pulumi.Config("aws")

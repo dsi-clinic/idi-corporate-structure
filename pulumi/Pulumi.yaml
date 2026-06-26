@@ -11,17 +11,12 @@ config:
     description: Name of the application
     default: "corporate-structure"
 
-  idi:openai_api_key:
-    description: OpenAI API key (stored as secret in AWS Secrets Manager)
-    secret: true
-
   idi:openai_model:
     description: OpenAI model ID used for subsidiary extraction
     default: "gpt-4.1-nano"
 
   idi:sec_user_agent:
-    description: "SEC EDGAR User-Agent header value (format: Name email@example.com)"
-    secret: true
+    description: "SEC EDGAR User-Agent header — public contact string (Name email@example.com)"
 
   idi:cron_corporate_structure:
     description: EventBridge cron schedule for the corporate structure processor
@@ -51,19 +46,15 @@ config:
     description: Whether the EventBridge schedule is enabled
     default: "false"
 
-  idi:bucket_name:
-    description: S3 bucket name for pipeline input, output, and failures (created externally)
-
   idi:input_file:
-    description: Input file path (S3 URI or HTTPS URL)
+    description: >-
+      Input path the orchestrator reads. A bucket-relative key (resolved against
+      the shared bucket from SSM) or a full URI (s3:// or https://, used as-is).
     default: "https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip"
 
   idi:log_retention_days:
     description: CloudWatch log group retention in days
     default: "30"
-
-  idi:shared_dlq_name:
-    description: Name of the shared scheduler DLQ owned by idi-corporate-structure
 
   idi:ecr_image_count:
     description: ECR image retention count

@@ -1,0 +1,22 @@
+# Committed non-secret config for the dev stack (config-as-code, issue #25).
+#
+# These were previously injected by the deploy workflow from GitHub secrets;
+# they are NOT secret, so they live here for a git audit trail. Replace the
+# <REQUIRED ...> placeholders, and confirm the rest match the values you used in
+# the old GitHub secrets (the others below are the program's code defaults).
+#
+# NOT here:
+#   - openai_api_key      -> SSM SecureString, set out-of-band
+#   - bucket_name / shared_dlq_name -> read from the shared stack via SSM
+#   - idi:app_name, aws:region      -> set by the deploy workflow
+config:
+  idi:input_file: "<REQUIRED: input path the orchestrator reads, e.g. companies.csv>"
+  idi:sec_user_agent: "<REQUIRED: SEC EDGAR contact, e.g. 'IDI Clinic data@uchicago.edu'>"
+  idi:cpu: "1024"
+  idi:memory: "4096"
+  idi:rate_limit: "0.2"
+  idi:num_workers: "10"
+  idi:input_sample_size: "0"
+  idi:openai_model: "gpt-4.1-nano"
+  idi:cron_corporate_structure: "cron(0 2 * * ? *)"
+  idi:schedule_enabled: "false"

@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   pipeline:
-    uses: dsi-clinic/idi-ftm2j-shared/.github/workflows/pipeline-docker.yml@v0.1.8
+    uses: dsi-clinic/idi-ftm2j-shared/.github/workflows/pipeline-docker.yml@v0.1.9
     secrets: inherit
     with:
       app-name: corporate-structure

@@ -116,9 +116,7 @@ task_execution_secrets_policy = aws.iam.RolePolicy(
                     "Action": ["kms:Decrypt"],
                     "Resource": "*",
                     "Condition": {
-                        "StringEquals": {
-                            "kms:ViaService": f"ssm.{config.aws_region}.amazonaws.com"
-                        }
+                        "StringEquals": {"kms:ViaService": f"ssm.{config.aws_region}.amazonaws.com"}
                     },
                 },
             ],

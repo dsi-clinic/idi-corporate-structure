@@ -51,8 +51,7 @@ container_definitions = pulumi.Output.all(
     image=ecr.orchestrator_image,
     log_group_name=logs.log_group.name,
     region=config.aws_region,
-    openai_secret_arn=secrets.openai_secret.arn,
-    sec_user_agent_secret_arn=secrets.sec_user_agent_secret.arn,
+    openai_secret_arn=secrets.openai_api_key_param.arn,
 ).apply(
     lambda args: json.dumps(
         [
@@ -66,15 +65,13 @@ container_definitions = pulumi.Output.all(
                     {"name": "CLOUDWATCH_LOGS_ENABLED", "value": "false"},
                     {"name": "INPUT_SAMPLE_SIZE", "value": input_sample_size},
                     {"name": "PYTHONUNBUFFERED", "value": "1"},
+                    # Public SEC contact string (committed config), not a secret.
+                    {"name": "SEC_USER_AGENT", "value": config.sec_user_agent},
                 ],
                 "secrets": [
                     {
                         "name": "OPENAI_API_KEY",
                         "valueFrom": args["openai_secret_arn"],
-                    },
-                    {
-                        "name": "SEC_USER_AGENT",
-                        "valueFrom": args["sec_user_agent_secret_arn"],
                     },
                 ],
                 "logConfiguration": {

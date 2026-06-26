@@ -1,4 +1,21 @@
-"""AWS Secrets Manager resources for pipeline secrets."""
+"""Genuine secrets as SSM Parameter Store SecureString parameters.
+
+The processor's one real credential — the OpenAI API key — is stored as an SSM
+`SecureString` rather than in Secrets Manager or Pulumi config. This keeps the
+value out of git and out of Pulumi state (these repos are public): Pulumi only
+declares the parameter with a placeholder and `ignore_changes=["value"]`, so the
+resource + IAM are codified while the real value is set out-of-band:
+
+    aws ssm put-parameter --overwrite --type SecureString \
+      --name /idi/<stack>/<app>/secrets/openai_api_key --value '<real key>'
+
+The ECS task definition injects it by ARN via `secrets:`, so the value never
+touches CI logs or state. Rotation is a `put-parameter --overwrite`, picked up
+at the next task launch — no deploy.
+
+(`sec_user_agent` is NOT here — it's a public SEC contact string, kept in
+committed config and injected as a plain env var.)
+"""
 
 import pulumi_aws as aws
 
@@ -6,46 +23,16 @@ import pulumi
 
 from . import config
 
-# -----------------------------------------------------------------------------
-# Config (required — Pulumi fails at deploy time if missing)
-# -----------------------------------------------------------------------------
-openai_api_key = config.config.require_secret("openai_api_key")
-sec_user_agent = config.config.require_secret("sec_user_agent")
+_secrets_prefix = f"/idi/{config.stack_name}/{config.app_name}/secrets"
 
-# -----------------------------------------------------------------------------
-# Secrets
-# -----------------------------------------------------------------------------
-openai_secret = aws.secretsmanager.Secret(
-    "idi-secret-openai-api-key",
-    name=f"{config.name_prefix}-openai-api-key",
-    recovery_window_in_days=0,
+openai_api_key_param = aws.ssm.Parameter(
+    "idi-ssm-secret-openai-api-key",
+    name=f"{_secrets_prefix}/openai_api_key",
+    type="SecureString",
+    # Placeholder only — the real value is set out-of-band and never managed by
+    # Pulumi (hence ignore_changes), so it stays out of git and state.
+    value="PLACEHOLDER-set-via-aws-ssm-put-parameter",
+    description="OpenAI API key (real value set out-of-band).",
     tags=config.tags(),
-)
-
-openai_secret_version = aws.secretsmanager.SecretVersion(
-    "idi-secret-version-openai",
-    secret_id=openai_secret.id,
-    secret_string=openai_api_key,
-    opts=pulumi.ResourceOptions(
-        depends_on=[openai_secret],
-        ignore_changes=["secret_string"],
-    ),
-)
-
-sec_user_agent_secret = aws.secretsmanager.Secret(
-    "idi-secret-sec-user-agent",
-    name=f"{config.name_prefix}-sec-user-agent",
-    description="SEC EDGAR User-Agent header value (Name email@example.com)",
-    recovery_window_in_days=0,
-    tags=config.tags(),
-)
-
-sec_user_agent_secret_version = aws.secretsmanager.SecretVersion(
-    "idi-secret-version-sec-user-agent",
-    secret_id=sec_user_agent_secret.id,
-    secret_string=sec_user_agent,
-    opts=pulumi.ResourceOptions(
-        depends_on=[sec_user_agent_secret],
-        ignore_changes=["secret_string"],
-    ),
+    opts=pulumi.ResourceOptions(ignore_changes=["value"]),
 )

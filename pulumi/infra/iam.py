@@ -89,7 +89,9 @@ task_execution_logs_policy = aws.iam.RolePolicy(
     ),
 )
 
-# Inline: read pipeline secrets from Secrets Manager
+# Inline: read the SecureString secret from SSM at task launch. The execution
+# role needs ssm:GetParameters on the param plus kms:Decrypt to unwrap the
+# SecureString (scoped via ViaService so KMS is usable only through SSM).
 task_execution_secrets_policy = aws.iam.RolePolicy(
     "idi-policy-ecs-execution-secrets",
     role=task_execution_role.id,
@@ -98,16 +100,27 @@ task_execution_secrets_policy = aws.iam.RolePolicy(
             "Version": "2012-10-17",
             "Statement": [
                 {
+                    "Sid": "ReadSecretParams",
                     "Effect": "Allow",
                     "Action": [
-                        "secretsmanager:GetSecretValue",
-                        "secretsmanager:DescribeSecret",
+                        "ssm:GetParameters",
+                        "ssm:GetParameter",
                     ],
                     "Resource": [
-                        secrets.openai_secret.arn,
-                        secrets.sec_user_agent_secret.arn,
+                        secrets.openai_api_key_param.arn,
                     ],
-                }
+                },
+                {
+                    "Sid": "DecryptViaSSM",
+                    "Effect": "Allow",
+                    "Action": ["kms:Decrypt"],
+                    "Resource": "*",
+                    "Condition": {
+                        "StringEquals": {
+                            "kms:ViaService": f"ssm.{config.aws_region}.amazonaws.com"
+                        }
+                    },
+                },
             ],
         }
     ),

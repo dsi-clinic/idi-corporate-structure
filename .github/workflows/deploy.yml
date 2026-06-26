@@ -3,9 +3,7 @@
 # exact release of dsi-clinic/idi-ftm2j-shared. Bump the @vX.Y.Z pin to upgrade.
 #
 # NOTE: pin a release that includes the env-secret + caller-permissions fixes
-# (v0.1.8+). The shared bucket/DLQ SSM params must be deployed first, and this
-# repo's openai_api_key SecureString value set out-of-band, before a deploy will
-# succeed.
+# (v0.1.8+).
 name: Deploy
 
 on:

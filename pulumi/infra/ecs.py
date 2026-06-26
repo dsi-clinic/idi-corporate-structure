@@ -69,7 +69,6 @@ container_definitions = pulumi.Output.all(
                     {"name": "CLOUDWATCH_LOGS_ENABLED", "value": "false"},
                     {"name": "INPUT_SAMPLE_SIZE", "value": input_sample_size},
                     {"name": "PYTHONUNBUFFERED", "value": "1"},
-                    # Public SEC contact string (committed config), not a secret.
                     {"name": "SEC_USER_AGENT", "value": config.sec_user_agent},
                 ],
                 "secrets": [

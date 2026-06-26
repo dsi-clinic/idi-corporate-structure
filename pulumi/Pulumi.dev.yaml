@@ -1,14 +1,4 @@
-# Committed non-secret config for the dev stack (config-as-code, issue #25).
-#
-# These were previously injected by the deploy workflow from GitHub secrets;
-# they are NOT secret, so they live here for a git audit trail. Replace the
-# <REQUIRED ...> placeholders, and confirm the rest match the values you used in
-# the old GitHub secrets (the others below are the program's code defaults).
-#
-# NOT here:
-#   - openai_api_key      -> SSM SecureString, set out-of-band
-#   - bucket_name / shared_dlq_name -> read from the shared stack via SSM
-#   - idi:app_name, aws:region      -> set by the deploy workflow
+# Committed non-secret config for the dev stack.
 config:
   idi:input_file: "corporate-structure/input/submissions.zip"
   idi:sec_user_agent: "DSI Core Facility dsicorefacility_project8@uchicago.edu"

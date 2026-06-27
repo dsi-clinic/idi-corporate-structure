@@ -1,4 +1,4 @@
-"""Pipeline Orchestrator - Runs the corporate structure pipeline for a specified input file.
+"""Pipeline Orchestrator - Runs the corporate structure pipeline for the specified input file.
 
 Uses the `SubsidiaryPipeline` to process the input file and save the results to the output file.
 GPT extraction is performed in a separate thread.

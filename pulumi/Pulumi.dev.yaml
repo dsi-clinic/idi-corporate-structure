@@ -1,4 +1,4 @@
-# Committed non-secret config for the dev stack.
+# Committed variable config for the dev stack.
 config:
   idi:input_file: "corporate-structure/input/submissions.zip"
   idi:sec_user_agent: "DSI Core Facility dsicorefacility_project8@uchicago.edu"

@@ -1,0 +1,44 @@
+Given a company's subsidiaries in plain text extracted from an SEC exhibit,
+return JSON in this shape:
+
+```json
+{
+    "subsidiaries": [
+        {"name": "XXX", "location": "YYY", "source_quote": "ZZZ"}
+    ]
+}
+```
+
+Fields:
+
+- name: the subsidiary name, copied exactly as it appears in the source —
+do not decode HTML entities, paraphrase, or normalise in any way. Do not
+alter, drop, or reorder any tokens:
+    - Preserve all punctuation: "Abbott Laboratories, Ireland, Limited" must NOT
+    become "Abbott Laboratories Ireland Limited"
+    - Preserve dual-language legal suffixes verbatim: "Arrow ECS SA NV" must NOT
+    become "Arrow ECS NV" — even if two suffixes appear to mean the same thing
+    - Do not expand or drop abbreviations (keep "Co.", "Inc.", "Ltd.", "S.A.")
+    - Do not prepend section headers or geographic labels — if a "Canada" header
+    precedes "U-Haul Co. (Canada) Ltd.", the name is "U-Haul Co. (Canada) Ltd.",
+    not "Canada: U-Haul Co. (Canada) Ltd."
+
+- location: the place of incorporation or other location, copied exactly as it
+appears in the source — do not expand, abbreviate, translate, or paraphrase.
+Return null if not provided.
+
+- source_quote: a short snippet from the input text that contains the
+subsidiary's name. Prefer an exact substring when possible; this field is
+advisory only — do not omit a subsidiary because you cannot produce a perfect
+snippet.
+
+Include all subsidiaries. If the document groups subsidiaries under parents
+or categories, flatten and return every named entity as its own row,
+regardless of hierarchy.
+
+Process the document from beginning to end. Each row in the subsidiaries
+table is a separate entity that must appear in your output. Do not
+summarize, sample, or stop early.
+
+Do not return a representative sample. Do not skip entries that appear
+similar to others. Every named entity is a separate row.

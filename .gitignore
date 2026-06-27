@@ -1,7 +1,20 @@
+# Python-generated files
 .jupyter
 .ipynb_checkpoints
 __pycache__
 *~
 *.egg-info
+
+# Virtual environments
 .claude
 .venv
+
+# Log files
+logs/
+
+# Pulumi
+# NOTE: Pulumi.<stack>.yaml is intentionally COMMITTED (config-as-code) — it
+# holds only non-secret knobs; the API key lives in SSM SecureString.
+pulumi/venv/
+pulumi/__pycache__/
+pulumi/.pulumi/

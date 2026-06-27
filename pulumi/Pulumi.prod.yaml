@@ -1,0 +1,12 @@
+# Committed variable config for the prod stack.
+config:
+  idi:input_file: "<REQUIRED: bucket-relative key the orchestrator reads, e.g. corporate-structure/input/companies.csv>"
+  idi:sec_user_agent: "<REQUIRED: SEC EDGAR contact, e.g. 'IDI Clinic data@uchicago.edu'>"
+  idi:cpu: "1024"
+  idi:memory: "4096"
+  idi:rate_limit: "0.2"
+  idi:num_workers: "10"
+  idi:input_sample_size: "0"
+  idi:openai_model: "gpt-4.1-nano"
+  idi:cron_corporate_structure: "cron(0 2 * * ? *)"
+  idi:schedule_enabled: "false"

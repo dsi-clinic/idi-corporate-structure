@@ -1,13 +1,29 @@
 """Data types for the corporate structure pipeline."""
 
 # Standard application imports
+import datetime
 import pathlib
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+# Third party applications
+from idi_ftm2j_shared.sec import ScrapedDocument
 
 _REMOTE_SCHEMES = ("s3://", "https://", "http://", "gs://")
 SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
+
+# Single source of truth for which filings carry a subsidiaries exhibit
+# (Exhibit 21 domestic / Exhibit 8 foreign)
+TARGET_FORM_TYPES = [
+    # Domestic — Exhibit 21
+    "10-K", "10-K/A",
+    "10-KT", "10-KT/A",
+    # Foreign — Exhibit 8
+    "20-F", "20-F/A",
+    "20FR12B", "20FR12B/A",
+    "20FR12G", "20FR12G/A",
+]
 
 
 def _is_local(path: str) -> bool:
@@ -27,6 +43,25 @@ def _is_local(path: str) -> bool:
     return not path.startswith(_REMOTE_SCHEMES)
 
 
+@dataclass(frozen=True)
+class CompanyMeta:
+    """Per-CIK company metadata from the SEC submissions JSON.
+
+    Fetched once per CIK and shared across all of that company's filings.
+    Business address only — mailing address adds little for entity matching.
+    """
+    state_of_incorporation: str = ""
+    business_street1: str = ""
+    business_street2: str = ""
+    business_city: str = ""
+    business_state: str = ""          # addresses.business.stateOrCountry — "CA" or a country code
+    business_zip: str = ""
+    business_country: str = ""
+    business_country_code: str = ""
+    tickers: tuple[str, ...] = ()     # ("POWW",)
+    exchanges: tuple[str, ...] = ()   # ("Nasdaq",)
+
+
 @dataclass
 class Filing:
     """Represents a single SEC 10-K filing with its metadata and document URLs."""
@@ -35,11 +70,10 @@ class Filing:
     filing_date: str
     form_type: str
     accession_number: str
-    directory: str
     primary_document: str
     company_name: str = ""
-    location: str = ""
-    filename: str = ""
+    company: CompanyMeta = field(default_factory=CompanyMeta)
+    exhibit_documents: tuple[ScrapedDocument, ...] = ()  # EX-21/EX-8
 
     @property
     def exhibit_type(self) -> str:
@@ -57,6 +91,9 @@ class PipelineConfig:
     input_file: str
     failure_file: str
     output_file: str
+    start_date: datetime.date
+    end_date: datetime.date
+    sec_bucket: str
     openai_api_key: str = ""
     failure_flush_every: int = 50
     rate_limit: float = 0.2

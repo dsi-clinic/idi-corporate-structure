@@ -17,12 +17,17 @@ SUPPORTED_EXHIBIT_EXTENSIONS = frozenset({"HTM", "HTML", "TXT", "PDF"})
 # (Exhibit 21 domestic / Exhibit 8 foreign)
 TARGET_FORM_TYPES = [
     # Domestic — Exhibit 21
-    "10-K", "10-K/A",
-    "10-KT", "10-KT/A",
+    "10-K",
+    "10-K/A",
+    "10-KT",
+    "10-KT/A",
     # Foreign — Exhibit 8
-    "20-F", "20-F/A",
-    "20FR12B", "20FR12B/A",
-    "20FR12G", "20FR12G/A",
+    "20-F",
+    "20-F/A",
+    "20FR12B",
+    "20FR12B/A",
+    "20FR12G",
+    "20FR12G/A",
 ]
 
 
@@ -50,16 +55,17 @@ class CompanyMeta:
     Fetched once per CIK and shared across all of that company's filings.
     Business address only — mailing address adds little for entity matching.
     """
+
     state_of_incorporation: str = ""
     business_street1: str = ""
     business_street2: str = ""
     business_city: str = ""
-    business_state: str = ""          # addresses.business.stateOrCountry — "CA" or a country code
+    business_state: str = ""  # addresses.business.stateOrCountry — "CA" or a country code
     business_zip: str = ""
     business_country: str = ""
     business_country_code: str = ""
-    tickers: tuple[str, ...] = ()     # ("POWW",)
-    exchanges: tuple[str, ...] = ()   # ("Nasdaq",)
+    tickers: tuple[str, ...] = ()  # ("POWW",)
+    exchanges: tuple[str, ...] = ()  # ("Nasdaq",)
 
 
 @dataclass

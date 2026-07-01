@@ -22,20 +22,40 @@ from idi_corporate_structure.extractor import GptExtractor
 from idi_corporate_structure.pipeline import SubsidiaryPipeline
 from idi_corporate_structure.types import PipelineConfig
 
-
 DEFAULT_LOOK_BACK = 7
 SENSITIVE_ARGS = {"openai_api_key", "sec_user_agent"}
 
 
 def valid_date(s: str) -> datetime.date:
+    """Parse a ``YYYY-MM-DD`` string into a date, for use as an argparse ``type``.
+
+    Args:
+        s: Date string to parse.
+
+    Returns:
+        The parsed date.
+
+    Raises:
+        argparse.ArgumentTypeError: If ``s`` is not a valid ISO date.
+    """
     try:
         return datetime.date.fromisoformat(s)  # expects YYYY-MM-DD
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"Not a valid date: {s!r}")
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"Not a valid date: {s!r}") from err
 
 
-def validate_args(args, parser):
-    """Enforce the pairing argparse can't express on its own"""
+def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Enforce the pairing argparse can't express on its own.
+
+    Args:
+        args: Parsed command-line arguments to validate, mutated in place to
+            apply the ``--look-back`` default in daily mode.
+        parser: Parser used to report validation errors via ``parser.error``,
+            which prints usage and exits.
+
+    Returns:
+        None
+    """
     if args.start_date and not args.end_date:
         parser.error("--end-date is required when --start-date is given")
     if args.daily and args.end_date:
@@ -65,7 +85,11 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--input-file", type=str, required=True, help="Input file path")
     parser.add_argument("--output-file", type=str, required=True, help="Output file path")
     parser.add_argument("--failure-file", type=str, required=True, help="Failure file path")
-    parser.add_argument("--sec-bucket-prefix", type=str, help="S3 Bucket and prefix that contains SEC data (bucket-name/prefix)")
+    parser.add_argument(
+        "--sec-bucket-prefix",
+        type=str,
+        help="S3 Bucket and prefix that contains SEC data (bucket-name/prefix)",
+    )
 
     # daily flag cannot be combined with start date
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -97,14 +121,35 @@ def get_args() -> argparse.Namespace:
 
     parser.add_argument("--rate-limit", type=float, default=0.2, help="Rate limit")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of workers")
-    parser.add_argument("--look-back", type=int, default=None, help="Days to look back from the most recent date (daily mode only)")
+    parser.add_argument(
+        "--look-back",
+        type=int,
+        default=None,
+        help="Days to look back from the most recent date (daily mode only)",
+    )
 
     args = parser.parse_args()
     validate_args(args, parser)
     return args
 
 
-def get_dates(args) -> tuple[datetime.date, datetime.date]:
+def get_dates(args: argparse.Namespace) -> tuple[datetime.date, datetime.date]:
+    """Resolve the start/end date range to scrape from the parsed arguments.
+
+    In ``--daily`` mode, reads the most recent ``filing_date`` from the SEC
+    bucket's manifest and looks back ``args.look_back`` days from there.
+    Otherwise returns the explicit ``--start-date``/``--end-date`` values.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Tuple of ``(start_date, end_date)``.
+
+    Raises:
+        ValueError: If ``--daily`` mode is used and the manifest has no
+            usable ``filing_date`` values.
+    """
     if not args.daily:
         return args.start_date, args.end_date
 

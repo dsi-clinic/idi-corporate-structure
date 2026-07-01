@@ -17,7 +17,7 @@ import pdfplumber
 from idi_ftm2j_shared.api import SecClient
 from idi_ftm2j_shared.failures import FailureRegistry
 from idi_ftm2j_shared.logs import get_logger
-from idi_ftm2j_shared.sec import iter_filings_by_form_type, ScrapedDocument, ScrapedFiling
+from idi_ftm2j_shared.sec import ScrapedDocument, ScrapedFiling, iter_filings_by_form_type
 from idi_ftm2j_shared.storage import load_content
 
 # Application imports
@@ -37,7 +37,6 @@ from idi_corporate_structure.normalization import (
     normalize_subsidiary_location,
 )
 from idi_corporate_structure.types import (
-    SUPPORTED_EXHIBIT_EXTENSIONS,
     TARGET_FORM_TYPES,
     CompanyMeta,
     Filing,
@@ -166,7 +165,6 @@ class SubsidiaryPipeline(Pipeline):
         self._results_lock = threading.Lock()
         self.rows = []
 
-
     def _load_processed_accessions(self) -> set[str]:
         """Return accession numbers already present in the output parquet file.
 
@@ -202,13 +200,15 @@ class SubsidiaryPipeline(Pipeline):
             business_state=biz.get("stateOrCounty", ""),
             business_zip=biz.get("zipCode", ""),
             business_country=biz.get("country", ""),
-            business_country_code = biz.get("countryCode", ""),
+            business_country_code=biz.get("countryCode", ""),
             tickers=tuple(data.get("tickers", []) or ()),
-            exchanges=tuple(data.get("exchanges", []) or ())
+            exchanges=tuple(data.get("exchanges", []) or ()),
         )
 
     @staticmethod
-    def _select_exhibit_documents(scraped_filing: ScrapedFiling, exhibit_type: str) -> tuple[ScrapedDocument, ...]:
+    def _select_exhibit_documents(
+        scraped_filing: ScrapedFiling, exhibit_type: str
+    ) -> tuple[ScrapedDocument, ...]:
         """Return the scraped documents matching the filing's exhibit type.
 
         Args:
@@ -221,7 +221,8 @@ class SubsidiaryPipeline(Pipeline):
         """
         token = f"ex{exhibit_type}"  # ex21 or ex8
         return tuple(
-            d for d in scraped_filing.documents
+            d
+            for d in scraped_filing.documents
             if re.sub(r"[^0-9a-z]", "", d.type.lower()).startswith(token)
         )
 
@@ -260,7 +261,7 @@ class SubsidiaryPipeline(Pipeline):
             start_date=self.config.start_date,
             end_date=self.config.end_date,
             bucket=self.config.sec_bucket,
-            include_failures=True
+            include_failures=True,
         )
 
         if self._INPUT_SAMPLE_SIZE:
@@ -278,9 +279,11 @@ class SubsidiaryPipeline(Pipeline):
                 accession_number=scraped_filing.accession_number,
                 primary_document=scraped_filing.index_url,
                 company_name=scraped_filing.company_name,
-                company=company_meta
+                company=company_meta,
             )
-            filing.exhibit_documents = self._select_exhibit_documents(scraped_filing, filing.exhibit_type)
+            filing.exhibit_documents = self._select_exhibit_documents(
+                scraped_filing, filing.exhibit_type
+            )
 
             if self._should_skip(filing, processed_accessions):
                 self.stats.increment("skipped_filings")
@@ -379,8 +382,8 @@ class SubsidiaryPipeline(Pipeline):
         Args:
             work_queue: Queue of ``(Filing, dict)`` tuples to process. Each dict has
                 ``"url"`` and ``"data"`` keys for the exhibit content.
-            results_queue: Queue to which extracted ``list[Subsidiary]`` results are
-                posted.
+            subsidiaries: Shared list, guarded by ``self._results_lock``, that
+                extracted ``Subsidiary`` results are appended to.
 
         Returns:
             None
@@ -505,7 +508,10 @@ class SubsidiaryPipeline(Pipeline):
                     FailureType.NO_EXHIBIT_CONTENT,
                     "error",
                     "Exhibit %s - %s - %s does not have content (%s).",
-                    doc.filename, filing.cik, filing.accession_number, doc.s3_key
+                    doc.filename,
+                    filing.cik,
+                    filing.accession_number,
+                    doc.s3_key,
                 )
                 continue
 
@@ -610,7 +616,9 @@ class SubsidiaryPipeline(Pipeline):
             combined_subsidiaries_df["location"].fillna("").map(normalize_subsidiary_location)
         )
         combined_subsidiaries_df["parent_state_of_incorporation"] = (
-            combined_subsidiaries_df["parent_state_of_incorporation"].fillna("").map(normalize_parent_location)
+            combined_subsidiaries_df["parent_state_of_incorporation"]
+            .fillna("")
+            .map(normalize_parent_location)
         )
 
         # Drop duplicate rows keyed on (parent_cik, accession_number, name)

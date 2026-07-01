@@ -201,8 +201,8 @@ class SubsidiaryPipeline(Pipeline):
             business_zip=biz.get("zipCode", ""),
             business_country=biz.get("country", ""),
             business_country_code=biz.get("countryCode", ""),
-            tickers=tuple(data.get("tickers", []) or ()),
-            exchanges=tuple(data.get("exchanges", []) or ()),
+            tickers=tuple(t or "" for t in data.get("tickers") or ()),
+            exchanges=tuple(e or "" for e in data.get("exchanges") or ()),
         )
 
     @staticmethod

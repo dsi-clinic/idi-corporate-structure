@@ -204,6 +204,31 @@ class TestFetchCompanyMeta:
         called_url = pipeline.sec_client.query_endpoint.call_args.kwargs["sec_url"]
         assert "CIK0000320193.json" in called_url
 
+    def test_null_exchange_entry_becomes_empty_string(self, pipeline):
+        """Regression test: SEC returns exchanges: [null] for some unlisted tickers.
+
+        A raw None element used to survive into CompanyMeta.exchanges and crash
+        extractor.py's ",".join(filing.company.exchanges) downstream.
+        """
+        pipeline.sec_client.query_endpoint.return_value = {
+            "data": {"tickers": ["VRXA"], "exchanges": [None]}
+        }
+
+        meta = pipeline._fetch_company_meta("2079109")
+
+        assert meta.exchanges == ("",)
+        assert ",".join(meta.exchanges) == ""
+
+    def test_null_ticker_entry_becomes_empty_string(self, pipeline):
+        pipeline.sec_client.query_endpoint.return_value = {
+            "data": {"tickers": [None, "AAPL"], "exchanges": ["", "Nasdaq"]}
+        }
+
+        meta = pipeline._fetch_company_meta("320193")
+
+        assert meta.tickers == ("", "AAPL")
+        assert ",".join(meta.tickers) == ",AAPL"
+
 
 # ── load_input ────────────────────────────────────────────────────────────────
 

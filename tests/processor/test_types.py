@@ -1,16 +1,21 @@
 """Tests for processor.types — dataclasses and PipelineStats thread safety."""
 
+import datetime
 import threading
 import zipfile
 
 import pytest
 
 from idi_corporate_structure.types import (
+    CompanyMeta,
     Filing,
     PipelineConfig,
     PipelineStats,
     Subsidiary,
 )
+
+_START_DATE = datetime.date(2024, 1, 1)
+_END_DATE = datetime.date(2024, 1, 2)
 
 
 class TestPipelineStats:
@@ -75,6 +80,9 @@ class TestPipelineConfig:
             input_file=str(input_zip),
             failure_file=str(tmp_path / "failures.json"),
             output_file=str(tmp_path / "subsidiaries.parquet"),
+            start_date=_START_DATE,
+            end_date=_END_DATE,
+            sec_bucket="test-bucket",
         )
 
         assert config.input_file == str(input_zip)
@@ -87,6 +95,9 @@ class TestPipelineConfig:
                 input_file=str(tmp_path / "nonexistent.zip"),
                 failure_file=str(tmp_path / "failures.json"),
                 output_file=str(tmp_path / "subsidiaries.parquet"),
+                start_date=_START_DATE,
+                end_date=_END_DATE,
+                sec_bucket="test-bucket",
             )
 
     def test_creates_failure_directory_if_missing(self, tmp_path):
@@ -99,6 +110,9 @@ class TestPipelineConfig:
             input_file=str(input_zip),
             failure_file=str(failure_file),
             output_file=str(tmp_path / "subsidiaries.parquet"),
+            start_date=_START_DATE,
+            end_date=_END_DATE,
+            sec_bucket="test-bucket",
         )
 
         assert failure_file.parent.exists()
@@ -113,6 +127,9 @@ class TestPipelineConfig:
             input_file=str(input_zip),
             failure_file=str(tmp_path / "failures.json"),
             output_file=str(output_file),
+            start_date=_START_DATE,
+            end_date=_END_DATE,
+            sec_bucket="test-bucket",
         )
 
         assert output_file.parent.exists()
@@ -123,6 +140,9 @@ class TestPipelineConfig:
             input_file="s3://my-bucket/submissions.zip",
             failure_file="s3://my-bucket/failures.json",
             output_file="s3://my-bucket/subsidiaries.parquet",
+            start_date=_START_DATE,
+            end_date=_END_DATE,
+            sec_bucket="test-bucket",
         )
         assert config.input_file == "s3://my-bucket/submissions.zip"
 
@@ -135,6 +155,9 @@ class TestPipelineConfig:
             input_file=str(input_zip),
             failure_file=str(tmp_path / "failures.json"),
             output_file=str(tmp_path / "subsidiaries.parquet"),
+            start_date=_START_DATE,
+            end_date=_END_DATE,
+            sec_bucket="test-bucket",
             num_workers=4,
         )
         assert config.num_workers == 4
@@ -146,9 +169,9 @@ class TestFilingDataclass:
     def test_filing_fields(self, sample_filing):
         assert sample_filing.cik == "0000320193"
         assert sample_filing.form_type == "10-K"
-        assert "index.json" in sample_filing.directory
+        assert "aapl-20240928.htm" in sample_filing.primary_document
         assert sample_filing.company_name == "APPLE INC"
-        assert sample_filing.location == "CA"
+        assert sample_filing.company.state_of_incorporation == "CA"
 
     def test_filing_equality(self):
         f1 = Filing(
@@ -156,7 +179,6 @@ class TestFilingDataclass:
             filing_date="2024-01-01",
             form_type="10-K",
             accession_number="001-24-000001",
-            directory="https://example.com/index.json",
             primary_document="",
         )
         f2 = Filing(
@@ -164,10 +186,29 @@ class TestFilingDataclass:
             filing_date="2024-01-01",
             form_type="10-K",
             accession_number="001-24-000001",
-            directory="https://example.com/index.json",
             primary_document="",
         )
         assert f1 == f2
+
+    def test_filing_company_defaults_to_empty_company_meta(self):
+        filing = Filing(
+            cik="001",
+            filing_date="2024-01-01",
+            form_type="10-K",
+            accession_number="001-24-000001",
+            primary_document="",
+        )
+        assert filing.company == CompanyMeta()
+
+    def test_filing_exhibit_documents_defaults_to_empty_tuple(self):
+        filing = Filing(
+            cik="001",
+            filing_date="2024-01-01",
+            form_type="10-K",
+            accession_number="001-24-000001",
+            primary_document="",
+        )
+        assert filing.exhibit_documents == ()
 
 
 class TestFilingExhibitType:
@@ -179,7 +220,6 @@ class TestFilingExhibitType:
             filing_date="",
             form_type=form_type,
             accession_number="",
-            directory="",
             primary_document="",
         )
 

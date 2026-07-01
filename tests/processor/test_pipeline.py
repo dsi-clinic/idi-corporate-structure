@@ -463,6 +463,25 @@ class TestExtractWorker:
             (sample_filing.cik, sample_filing.accession_number), FailureType.EXTRACTION_FAILED
         )
 
+    def test_generic_exception_logs_traceback_and_exhibit_url(
+        self, pipeline, sample_filing, mocker
+    ):
+        """Regression test: the error and exhibit URL must be diagnosable from the log line."""
+        pipeline.extractor.extract.side_effect = RuntimeError("GPT error")
+        exception_spy = mocker.spy(pipeline.logger, "exception")
+        exhibit = make_exhibit_response()
+
+        work_queue, subsidiaries = queue.Queue(), []
+        self._start_worker(pipeline, work_queue, subsidiaries)
+
+        work_queue.put((sample_filing, exhibit))
+        work_queue.join()
+
+        exception_spy.assert_called_once()
+        logged_args = exception_spy.call_args.args
+        assert "GPT error" in str(logged_args)
+        assert exhibit["url"] in logged_args
+
     def test_records_document_error(self, pipeline, sample_filing, mocker):
         pipeline.extractor.extract.side_effect = DocumentError("too long")
         spy = mocker.spy(pipeline.failure_registry, "add")

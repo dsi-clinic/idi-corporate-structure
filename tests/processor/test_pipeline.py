@@ -623,6 +623,25 @@ class TestFetchExhibit:
         assert result == []
         assert pipeline.stats.failed_subsidiaries == 1
 
+    def test_records_failure_and_continues_when_s3_read_raises(
+        self, pipeline, sample_filing, mocker
+    ):
+        """Regression test: an S3 error (e.g. NoSuchBucket) must not crash the pipeline."""
+        sample_filing.exhibit_documents = (
+            make_scraped_document(filename="ex21.htm"),
+            make_scraped_document(filename="ex21b.htm"),
+        )
+        mocker.patch(
+            "idi_corporate_structure.pipeline.load_content",
+            side_effect=[Exception("NoSuchBucket"), b"Apple Operations LLC"],
+        )
+
+        result = pipeline._fetch_exhibit(sample_filing)
+
+        assert len(result) == 1
+        assert result[0]["data"] == "Apple Operations LLC"
+        assert pipeline.stats.failed_subsidiaries == 1
+
     def test_decodes_htm_as_html_to_text(self, pipeline, sample_filing, mocker):
         sample_filing.exhibit_documents = (make_scraped_document(filename="ex21.htm"),)
         mocker.patch(

@@ -82,7 +82,6 @@ def mock_extractor() -> MagicMock:
 def pipeline(tmp_path, mock_sec_client, mock_extractor) -> SubsidiaryPipeline:
     """A SubsidiaryPipeline wired with a temp failure/output path and mocked dependencies."""
     config = PipelineConfig(
-        input_file="s3://test-bucket/submissions.zip",
         failure_file=str(tmp_path / "failures.json"),
         output_file=str(tmp_path / "subsidiaries.parquet"),
         start_date=datetime.date(2024, 1, 1),

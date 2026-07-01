@@ -501,7 +501,22 @@ class SubsidiaryPipeline(Pipeline):
             if not doc.s3_key:
                 continue
 
-            raw_exhibit = load_content(doc.s3_key)
+            try:
+                raw_exhibit = load_content(doc.s3_key)
+            except Exception as e:
+                self._record_failure(
+                    (filing.cik, filing.accession_number),
+                    FailureType.NO_EXHIBIT_CONTENT,
+                    "error",
+                    "Failed to fetch exhibit %s - %s - %s from S3 (%s): %s",
+                    doc.filename,
+                    filing.cik,
+                    filing.accession_number,
+                    doc.s3_key,
+                    e,
+                )
+                continue
+
             if not raw_exhibit:
                 self._record_failure(
                     (filing.cik, filing.accession_number),

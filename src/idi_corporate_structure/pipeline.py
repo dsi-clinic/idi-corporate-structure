@@ -18,6 +18,7 @@ from idi_ftm2j_shared.api import SecClient
 from idi_ftm2j_shared.failures import FailureRegistry
 from idi_ftm2j_shared.logs import get_logger
 from idi_ftm2j_shared.sec import iter_filings_by_form_type, ScrapedDocument, ScrapedFiling
+from idi_ftm2j_shared.storage import load_content
 from tqdm import tqdm
 
 # Application imports
@@ -394,158 +395,19 @@ class SubsidiaryPipeline(Pipeline):
             finally:
                 work_queue.task_done()
 
-    def _fetch_directory(self, filing: Filing) -> list[dict]:
-        """Fetch directory data from the SEC.
-
-        Args:
-            filing: Filing object to fetch directory data from
-
-        Returns:
-            Directory response items
-        """
-        directory_response = self.sec_client.query_endpoint(filing.directory)
-        if "directory" not in directory_response.get("data", {}).keys():
-            self._record_failure(
-                (filing.cik, filing.filename),
-                FailureType.NO_FILING_DIRECTORY,
-                "error",
-                "Filing: %s - %s - %s does not have a directory listing.",
-                filing.cik,
-                filing.accession_number,
-                filing.filing_date,
-            )
-            return []
-        return directory_response.get("data", {}).get("directory", {}).get("item", [])
-
-    def _fetch_pdf_content(self, filing: Filing, item: dict, sec_url: str) -> dict:
-        """Fetch PDF content from the SEC.
-
-        Args:
-            filing: Filing object to fetch PDF content from
-            item: Item object to fetch PDF content from
-            sec_url: URL of the PDF file
-
-        Returns:
-            Dict with 'url' and 'data' keys
-        """
-        self.logger.warning("PDF exhibit found: %s / %s", filing.cik, item["name"])
-        item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_bytes=True)
-        exhibit_content = {}
-        if item_response.get("data"):
-            try:
-                with pdfplumber.open(io.BytesIO(item_response["data"])) as pdf:
-                    text = "\n\n".join(page.extract_text() or "" for page in pdf.pages)
-                exhibit_content = {"url": sec_url, "data": text}
-            except Exception:
-                self._record_failure(
-                    (filing.cik, filing.accession_number),
-                    FailureType.NO_EXHIBIT_CONTENT,
-                    "error",
-                    "Failed to extract PDF content: %s",
-                    sec_url,
-                )
-        return exhibit_content
-
-    def _fetch_html_content(self, name: str, filing: Filing, sec_url: str) -> dict:
-        """Fetch HTM/HTML content from the SEC and convert it to plain text.
-
-        Mirrors ``_fetch_pdf_content``: fetches the document and pre-processes
-        it (HTML → text) so the extractor works on the same string it hands to
-        the model and uses for grounding.
-
-        Args:
-            name: Name of the item
-            filing: Filing object to fetch HTML content from
-            sec_url: URL of the HTML file
-
-        Returns:
-            Dict with ``"url"`` and ``"data"`` (plain text) keys.
-        """
-        item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_json=False)
-        if item_response.get("data"):
-            exhibit_content = {"url": sec_url, "data": html_to_text(item_response["data"])}
-        else:
-            exhibit_content = {}
+    def _extract_pdf_text(self, raw_content, doc_url, filing):
+        try:
+            with pdfplumber.open(io.BytesIO(raw_content)) as pdf:
+                text = "\n\n".join(page.extract_text() or "" for page in pdf.pages)
+        except Exception:
             self._record_failure(
                 (filing.cik, filing.accession_number),
                 FailureType.NO_EXHIBIT_CONTENT,
                 "error",
-                "Exhibit %s - %s - %s does not have content.",
-                name,
-                filing.cik,
-                filing.accession_number,
+                "Failed to extract PDF content: %s",
+                doc_url,
             )
-        return exhibit_content
-
-    def _fetch_other_content(self, name: str, filing: Filing, sec_url: str) -> dict:
-        """Fetch plain-text exhibit content from the SEC.
-
-        Args:
-            name: Name of the item
-            filing: Filing object to fetch other content from
-            sec_url: URL of the other content
-
-        Returns:
-            Dict with 'url' and 'data' keys
-        """
-        item_response = self.sec_client.query_endpoint(sec_url=sec_url, return_json=False)
-        if item_response.get("data"):
-            exhibit_content = {"url": sec_url, "data": item_response["data"]}
-        else:
-            exhibit_content = {}
-            self._record_failure(
-                (filing.cik, filing.accession_number),
-                FailureType.NO_EXHIBIT_CONTENT,
-                "error",
-                "Exhibit %s - %s - %s does not have content.",
-                name,
-                filing.cik,
-                filing.accession_number,
-            )
-        return exhibit_content
-
-    def _fetch_exhibit_content(self, filing: Filing, item: dict) -> dict:
-        """Fetch exhibit content from the SEC.
-
-        Supports HTM, HTML, TXT, and PDF files. PDFs are extracted via pdfplumber.
-        Unsupported file types are skipped. PDF instances are logged as warnings
-        since they are rare and may require manual review.
-
-        Args:
-            filing: Filing object to fetch exhibit content from
-            item: Item object to fetch exhibit content from
-
-        Returns:
-            Dict with 'url' and 'data' keys, or empty dict if not an exhibit 21 file
-            or the file type is unsupported.
-        """
-        name = item["name"].upper()
-        accession = filing.accession_number.replace("-", "")
-
-        num = filing.exhibit_type
-        num_re = self.TWENTYONE if num == "21" else self.EIGHT
-
-        if not (
-            (self.EX.search(name) and (name.startswith(num) or num_re.search(name)))
-            or "SUB" in name
-        ):
-            return {}
-
-        ext = item["name"].rsplit(".", 1)[-1].upper() if "." in item["name"] else ""
-        if ext not in SUPPORTED_EXHIBIT_EXTENSIONS:
-            self.logger.warning("Unsupported exhibit extension: %s", ext)
-            return {}
-
-        sec_url = f"{self.sec_client.SEC_URL}/{filing.cik}/{accession}/{item['name']}"
-        self.stats.increment(f"{ext.lower()}_exhibits")
-        if ext == "PDF":
-            exhibit_content = self._fetch_pdf_content(filing, item, sec_url)
-        elif ext in ("HTM", "HTML"):
-            exhibit_content = self._fetch_html_content(name, filing, sec_url)
-        else:
-            exhibit_content = self._fetch_other_content(name, filing, sec_url)
-
-        return exhibit_content
+        return text
 
     def _fetch_exhibit(self, filing: Filing) -> list[dict]:
         """Fetch exhibit data from the SEC.
@@ -556,12 +418,32 @@ class SubsidiaryPipeline(Pipeline):
         Returns:
             List of dicts with 'url' and 'data' keys
         """
-        directory_items = self._fetch_directory(filing)
         exhibit_content = []
-        for item in directory_items:
-            exhibits = self._fetch_exhibit_content(filing, item)
-            if exhibits:
-                exhibit_content.append(exhibits)
+        for doc in filing.exhibit_documents:
+            if not doc.s3_key:
+                continue
+
+            raw_exhibit = load_content(doc.s3_key)
+            if not raw_exhibit:
+                self._record_failure(
+                    (filing.cik, filing.accession_number),
+                    FailureType.NO_EXHIBIT_CONTENT,
+                    "error",
+                    "Exhibit %s - %s - %s does not have content.",
+                    doc.filename, filing.cik, filing.accession_number,
+                )
+                continue
+
+            ext = doc.filename.rsplit(".", 1)[-1].upper() if "." in doc.filename else ""
+            if ext == "PDF":
+                text = self._extract_pdf_text(raw_exhibit, doc.url, filing)
+            elif ext in ("HTM", "HTML"):
+                text = html_to_text(raw_exhibit.decode("utf-8", errors="replace"))
+            else:
+                text = raw_exhibit.decode("utf-8", errors="replace")
+
+            exhibit_content.append({"url": doc.url, "data": text})
+
         return exhibit_content
 
     def process(self, input_list: list[Filing]) -> list[Subsidiary]:

@@ -144,7 +144,7 @@ class SubsidiaryPipeline(Pipeline):
 
     CIK_JSON_URL = "https://data.sec.gov/submissions"
     _INPUT_SAMPLE_SIZE = int(os.environ.get("INPUT_SAMPLE_SIZE", 0))
-    _LOG_EVERY = 10
+    _LOG_EVERY = 5
 
     def __init__(
         self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
@@ -167,7 +167,13 @@ class SubsidiaryPipeline(Pipeline):
         self.rows = []
 
 
-    def _load_processed_accessions(self):
+    def _load_processed_accessions(self) -> set[str]:
+        """Return accession numbers already present in the output parquet file.
+
+        Returns:
+            Set of accession numbers, or an empty set if the output file
+            does not exist yet.
+        """
         try:
             output_df = pd.read_parquet(self.config.output_file, columns=["accession_number"])
         except FileNotFoundError:
@@ -175,6 +181,15 @@ class SubsidiaryPipeline(Pipeline):
         return set(output_df["accession_number"].unique())
 
     def _fetch_company_meta(self, cik: str) -> CompanyMeta:
+        """Fetch per-CIK company metadata from the SEC submissions JSON.
+
+        Args:
+            cik: SEC CIK number for the filer.
+
+        Returns:
+            CompanyMeta populated from the submissions endpoint, with blank
+            defaults for any fields missing from the response.
+        """
         cik_10 = str(int(cik)).zfill(10)
         url = f"{self.CIK_JSON_URL}/CIK{cik_10}.json"
         data = self.sec_client.query_endpoint(sec_url=url).get("data", {})
@@ -194,6 +209,16 @@ class SubsidiaryPipeline(Pipeline):
 
     @staticmethod
     def _select_exhibit_documents(scraped_filing: ScrapedFiling, exhibit_type: str) -> tuple[ScrapedDocument, ...]:
+        """Return the scraped documents matching the filing's exhibit type.
+
+        Args:
+            scraped_filing: Manifest whose documents are filtered.
+            exhibit_type: Exhibit number to match — ``"21"`` or ``"8"``.
+
+        Returns:
+            Documents whose ``type`` starts with ``ex21``/``ex8`` (after
+            stripping non-alphanumeric characters), in manifest order.
+        """
         token = f"ex{exhibit_type}"  # ex21 or ex8
         return tuple(
             d for d in scraped_filing.documents
@@ -201,6 +226,18 @@ class SubsidiaryPipeline(Pipeline):
         )
 
     def _should_skip(self, filing: Filing, processed_accessions: set[str]) -> bool:
+        """Return True if the filing was already processed or previously failed.
+
+        Args:
+            filing: Filing being considered for processing.
+            processed_accessions: Accession numbers already present in the
+                output file.
+
+        Returns:
+            True if the filing's accession number is in
+            ``processed_accessions`` or already recorded in the failure
+            registry.
+        """
         return (
             filing.accession_number in processed_accessions
             or (filing.cik, filing.accession_number) in self.failure_registry
@@ -208,6 +245,10 @@ class SubsidiaryPipeline(Pipeline):
 
     def load_input(self) -> list[Filing]:
         """Load input data from the SEC and return a list of filings.
+
+        Filings with no matching exhibit documents are recorded as
+        ``NO_EXHIBIT_FOUND`` failures and excluded from the returned list, so
+        the count reflects filings that actually have exhibit content to fetch.
 
         Returns:
             A list of Filing objects
@@ -227,6 +268,8 @@ class SubsidiaryPipeline(Pipeline):
 
         filings = []
         for scraped_filing in scraped_filings:
+            self.stats.increment("total_filing")
+
             company_meta = self._fetch_company_meta(scraped_filing.cik)
             filing = Filing(
                 cik=scraped_filing.cik,
@@ -239,8 +282,25 @@ class SubsidiaryPipeline(Pipeline):
             )
             filing.exhibit_documents = self._select_exhibit_documents(scraped_filing, filing.exhibit_type)
 
-            if not self._should_skip(filing, processed_accessions):
-                filings.append(filing)
+            if self._should_skip(filing, processed_accessions):
+                self.stats.increment("skipped_filings")
+                continue
+
+            if not filing.exhibit_documents:
+                self._record_failure(
+                    (filing.cik, filing.accession_number),
+                    FailureType.NO_EXHIBIT_FOUND,
+                    "warning",
+                    "No exhibit found for filing: %s - %s - %s (%s)",
+                    filing.cik,
+                    filing.accession_number,
+                    filing.filing_date,
+                    scraped_filing.index_url,
+                    stat_keys=("failed_filings",),
+                )
+                continue
+
+            filings.append(filing)
 
         return filings
 
@@ -285,6 +345,8 @@ class SubsidiaryPipeline(Pipeline):
             num_subsidiaries: The number of subsidiaries extracted
             filing: The Filing object the subsidiaries were extracted for
         """
+        self.stats.increment("total_subsidiaries", num_subsidiaries)
+
         if num_chunks > 1:
             self.stats.increment("chunked_extractions")
 
@@ -397,7 +459,18 @@ class SubsidiaryPipeline(Pipeline):
                         self.stats.queued_documents,
                     )
 
-    def _extract_pdf_text(self, raw_content, doc_url, filing):
+    def _extract_pdf_text(self, raw_content: bytes, doc_url: str, filing: Filing) -> str:
+        """Extract plain text from a PDF exhibit using pdfplumber.
+
+        Args:
+            raw_content: Raw PDF bytes fetched from S3.
+            doc_url: Original SEC URL of the PDF, used for failure logging.
+            filing: Filing the PDF belongs to, used for the failure registry key.
+
+        Returns:
+            Extracted text, or an empty string if the PDF could not be parsed.
+        """
+        text = ""
         try:
             with pdfplumber.open(io.BytesIO(raw_content)) as pdf:
                 text = "\n\n".join(page.extract_text() or "" for page in pdf.pages)
@@ -431,12 +504,15 @@ class SubsidiaryPipeline(Pipeline):
                     (filing.cik, filing.accession_number),
                     FailureType.NO_EXHIBIT_CONTENT,
                     "error",
-                    "Exhibit %s - %s - %s does not have content.",
-                    doc.filename, filing.cik, filing.accession_number,
+                    "Exhibit %s - %s - %s does not have content (%s).",
+                    doc.filename, filing.cik, filing.accession_number, doc.s3_key
                 )
                 continue
 
             ext = doc.filename.rsplit(".", 1)[-1].upper() if "." in doc.filename else ""
+            if ext in ("HTM", "HTML", "TXT", "PDF"):
+                self.stats.increment(f"{ext.lower()}_exhibits")
+
             if ext == "PDF":
                 text = self._extract_pdf_text(raw_exhibit, doc.url, filing)
             elif ext in ("HTM", "HTML"):
@@ -451,9 +527,11 @@ class SubsidiaryPipeline(Pipeline):
     def process(self, input_list: list[Filing]) -> list[Subsidiary]:
         """Fetch exhibit content and extract subsidiaries from each filing.
 
-        Exhibit fetching (SEC HTTP calls) runs on the main thread; extraction is
-        parallelised across :attr:`~PipelineConfig.num_workers` daemon threads.
-        Progress is reported via two tqdm bars (fetching and extraction).
+        Exhibit fetching runs on the main thread; extraction is parallelised
+        across :attr:`~PipelineConfig.num_workers` daemon threads. Progress is
+        logged periodically (every :attr:`_LOG_EVERY` documents) rather than
+        via a live progress bar, since bars don't render correctly in
+        aggregated cloud logs.
 
         Args:
             input_list: List of :class:`Filing` objects returned by
@@ -482,10 +560,6 @@ class SubsidiaryPipeline(Pipeline):
         # SEC operations to fetch exhibit data — one task per document
         for filing in input_list:
             exhibit_contents = self._fetch_exhibit(filing)
-            if not exhibit_contents:
-                self.failure_registry.add(
-                    (filing.cik, filing.accession_number), FailureType.NO_EXHIBIT_FOUND
-                )
             for exhibit_content in exhibit_contents:
                 work_queue.put((filing, exhibit_content))
                 self.stats.increment("queued_documents")

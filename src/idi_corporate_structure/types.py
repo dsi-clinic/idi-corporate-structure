@@ -129,6 +129,8 @@ class PipelineStats:
     html_exhibits: int = 0
     txt_exhibits: int = 0
     pdf_exhibits: int = 0
+    queued_documents: int = 0
+    extracted_documents: int = 0
 
     def __post_init__(self) -> None:
         """Initialize the pipeline stats."""

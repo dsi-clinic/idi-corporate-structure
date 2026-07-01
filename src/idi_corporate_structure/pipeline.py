@@ -4,12 +4,12 @@
 import dataclasses
 import datetime
 import io
-import json
 import os
 import queue
 import re
 import threading
 from abc import ABC, abstractmethod
+from itertools import islice
 
 # Third party imports
 import pandas as pd
@@ -19,7 +19,6 @@ from idi_ftm2j_shared.failures import FailureRegistry
 from idi_ftm2j_shared.logs import get_logger
 from idi_ftm2j_shared.sec import iter_filings_by_form_type, ScrapedDocument, ScrapedFiling
 from idi_ftm2j_shared.storage import load_content
-from tqdm import tqdm
 
 # Application imports
 from idi_corporate_structure.extractor import (
@@ -143,16 +142,9 @@ class Pipeline(ABC):
 class SubsidiaryPipeline(Pipeline):
     """Pipeline that fetches Exhibit 21 filings from SEC EDGAR and extracts subsidiary data."""
 
-    EX = re.compile(r"EX[-\d]", re.IGNORECASE)
-    IS_10K = re.compile("10-?K")
-    IS_20F = re.compile("20-?F")
-    IS_DATE = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")
-    TWENTYONE = re.compile("[^0-9]21")
-    EIGHT = re.compile("[^0-9]8")
-    IS_OVERFLOW = re.compile(r"-submissions-\d+\.json$")
     CIK_JSON_URL = "https://data.sec.gov/submissions"
-
     _INPUT_SAMPLE_SIZE = int(os.environ.get("INPUT_SAMPLE_SIZE", 0))
+    _LOG_EVERY = 10
 
     def __init__(
         self, config: PipelineConfig, sec_client: SecClient, extractor: GptExtractor
@@ -229,6 +221,9 @@ class SubsidiaryPipeline(Pipeline):
             bucket=self.config.sec_bucket,
             include_failures=True
         )
+
+        if self._INPUT_SAMPLE_SIZE:
+            scraped_filings = islice(scraped_filings, self._INPUT_SAMPLE_SIZE)
 
         filings = []
         for scraped_filing in scraped_filings:
@@ -394,6 +389,13 @@ class SubsidiaryPipeline(Pipeline):
 
             finally:
                 work_queue.task_done()
+                self.stats.increment("extracted_documents")
+                if self.stats.extracted_documents % self._LOG_EVERY == 0:
+                    self.logger.info(
+                        "Extracted %d / %d documents",
+                        self.stats.extracted_documents,
+                        self.stats.queued_documents,
+                    )
 
     def _extract_pdf_text(self, raw_content, doc_url, filing):
         try:
@@ -464,38 +466,32 @@ class SubsidiaryPipeline(Pipeline):
         work_queue = queue.Queue(maxsize=self.config.num_workers * 2)
         subsidiaries = []
 
-        with (
-            tqdm(
-                total=len(input_list), desc="Fetching exhibits", position=0, leave=True
-            ) as fetch_bar,
-            tqdm(total=0, desc="Extracting subsidiaries", position=1, leave=True) as extract_bar,
-        ):
-            # Start extract and results workers
-            extract_workers = [
-                threading.Thread(
-                    target=self._extract_worker,
-                    args=(work_queue, subsidiaries),
-                    daemon=True,
-                    name=f"extract-worker-{i}",
+        # Start extract and results workers
+        extract_workers = [
+            threading.Thread(
+                target=self._extract_worker,
+                args=(work_queue, subsidiaries),
+                daemon=True,
+                name=f"extract-worker-{i}",
+            )
+            for i in range(self.config.num_workers)
+        ]
+        for worker in extract_workers:
+            worker.start()
+
+        # SEC operations to fetch exhibit data — one task per document
+        for filing in input_list:
+            exhibit_contents = self._fetch_exhibit(filing)
+            if not exhibit_contents:
+                self.failure_registry.add(
+                    (filing.cik, filing.accession_number), FailureType.NO_EXHIBIT_FOUND
                 )
-                for i in range(self.config.num_workers)
-            ]
-            for worker in extract_workers:
-                worker.start()
+            for exhibit_content in exhibit_contents:
+                work_queue.put((filing, exhibit_content))
+                self.stats.increment("queued_documents")
 
-            # SEC operations to fetch exhibit data — one task per document
-            for filing in input_list:
-                exhibit_contents = self._fetch_exhibit(filing)
-                if not exhibit_contents:
-                    self.failure_registry.add(
-                        (filing.cik, filing.accession_number), FailureType.NO_EXHIBIT_FOUND
-                    )
-                for exhibit_content in exhibit_contents:
-                    work_queue.put((filing, exhibit_content))
-                    extract_bar.total += 1
-
-            # Wait for all extraction to complete
-            work_queue.join()
+        # Wait for all extraction to complete
+        work_queue.join()
 
         return subsidiaries
 

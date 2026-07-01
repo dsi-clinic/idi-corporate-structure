@@ -539,8 +539,8 @@ class SubsidiaryPipeline(Pipeline):
         combined_subsidiaries_df["location"] = (
             combined_subsidiaries_df["location"].fillna("").map(normalize_subsidiary_location)
         )
-        combined_subsidiaries_df["parent_location"] = (
-            combined_subsidiaries_df["parent_location"].fillna("").map(normalize_parent_location)
+        combined_subsidiaries_df["parent_state_of_incorporation"] = (
+            combined_subsidiaries_df["parent_state_of_incorporation"].fillna("").map(normalize_parent_location)
         )
 
         # Drop duplicate rows keyed on (parent_cik, accession_number, name)

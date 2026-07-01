@@ -158,5 +158,14 @@ class Subsidiary:
     name: str
     location: str
     parent_name: str = ""
-    parent_location: str = ""
+    parent_state_of_incorporation: str = ""
+    parent_business_street1: str = ""
+    parent_business_street2: str = ""
+    parent_business_city: str = ""
+    parent_business_state: str = ""
+    parent_business_zip: str = ""
+    parent_business_country: str = ""
+    parent_business_country_code: str = ""
+    parent_tickers: str = ""
+    parent_exchanges: str = ""
     source_quote: str = ""

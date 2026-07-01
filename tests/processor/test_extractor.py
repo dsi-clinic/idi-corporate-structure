@@ -701,17 +701,10 @@ class TestPerChunkYieldLogging:
             )
         )
 
-    def _make_extractor_with_capturable_logs(self, mocker):
-        """Build a GptExtractor whose logger propagates to the root (so caplog sees it)."""
-        extractor = GptExtractor(openai_api_key="fake-key")
-        mocker.patch.object(extractor._logger, "propagate", True)
-        return extractor
-
-    def test_yield_log_emitted_per_chunk(self, sample_filing, mocker, caplog):
+    def test_yield_log_emitted_per_chunk(self, sample_filing, mocker):
         """One yield log line per chunk, at INFO level when yield is healthy."""
-        import logging
-
-        extractor = self._make_extractor_with_capturable_logs(mocker)
+        extractor = GptExtractor(openai_api_key="fake-key")
+        info_spy = mocker.spy(extractor._logger, "info")
         mocker.patch.object(
             extractor,
             "_summarize",
@@ -727,18 +720,16 @@ class TestPerChunkYieldLogging:
             },
         )
 
-        with caplog.at_level(logging.INFO, logger="idi_corporate_structure.extractor"):
-            _, _, _, num_chunks = extractor.extract(sample_filing, self._build_chunked_doc())
+        _, _, _, num_chunks = extractor.extract(sample_filing, self._build_chunked_doc())
 
-        yield_lines = [r for r in caplog.records if "input rows" in r.getMessage()]
-        assert len(yield_lines) == num_chunks
-        assert all("yield=" in r.getMessage() for r in yield_lines)
+        yield_calls = [c for c in info_spy.call_args_list if "input rows" in c.args[0]]
+        assert len(yield_calls) == num_chunks
+        assert all("yield=" in c.args[0] for c in yield_calls)
 
-    def test_low_yield_emits_warning(self, sample_filing, mocker, caplog):
+    def test_low_yield_emits_warning(self, sample_filing, mocker):
         """Chunk yield below _LOW_YIELD_RATIO is logged as a WARNING."""
-        import logging
-
-        extractor = self._make_extractor_with_capturable_logs(mocker)
+        extractor = GptExtractor(openai_api_key="fake-key")
+        warning_spy = mocker.spy(extractor._logger, "warning")
         mocker.patch.object(
             extractor,
             "_summarize",
@@ -753,19 +744,15 @@ class TestPerChunkYieldLogging:
             },
         )
 
-        with caplog.at_level(logging.WARNING, logger="idi_corporate_structure.extractor"):
-            extractor.extract(sample_filing, self._build_chunked_doc())
+        extractor.extract(sample_filing, self._build_chunked_doc())
 
-        warnings = [
-            r for r in caplog.records if r.levelname == "WARNING" and "input rows" in r.getMessage()
-        ]
-        assert warnings, "low-yield chunk should produce a WARNING-level yield log"
+        yield_warnings = [c for c in warning_spy.call_args_list if "input rows" in c.args[0]]
+        assert yield_warnings, "low-yield chunk should produce a WARNING-level yield log"
 
-    def test_healthy_yield_does_not_warn(self, sample_filing, mocker, caplog):
+    def test_healthy_yield_does_not_warn(self, sample_filing, mocker):
         """High-yield chunks do not emit WARNING-level yield logs."""
-        import logging
-
-        extractor = self._make_extractor_with_capturable_logs(mocker)
+        extractor = GptExtractor(openai_api_key="fake-key")
+        warning_spy = mocker.spy(extractor._logger, "warning")
 
         def echo(doc):
             rows = [p for p in doc.split("\n\n") if p.strip()]
@@ -782,13 +769,10 @@ class TestPerChunkYieldLogging:
 
         mocker.patch.object(extractor, "_summarize", side_effect=echo)
 
-        with caplog.at_level(logging.WARNING, logger="idi_corporate_structure.extractor"):
-            extractor.extract(sample_filing, self._build_chunked_doc())
+        extractor.extract(sample_filing, self._build_chunked_doc())
 
-        warnings = [
-            r for r in caplog.records if r.levelname == "WARNING" and "input rows" in r.getMessage()
-        ]
-        assert not warnings, "healthy-yield chunks should not warn"
+        yield_warnings = [c for c in warning_spy.call_args_list if "input rows" in c.args[0]]
+        assert not yield_warnings, "healthy-yield chunks should not warn"
 
 
 class TestJnjChunkingFixture:

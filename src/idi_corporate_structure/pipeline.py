@@ -321,7 +321,10 @@ class SubsidiaryPipeline(Pipeline):
         Args:
             key: Registry key tuple, typically ``(cik, filename)``.
             failure_type: Classified failure type.
-            log_level: Logger method name (``"warning"`` or ``"error"``).
+            log_level: Logger method name (``"warning"``, ``"error"``, or
+                ``"exception"``). ``"exception"`` behaves like ``"error"`` but
+                also attaches the current traceback — only valid when called
+                from within an active ``except`` block.
             message: ``%s``-style log message.
             *log_args: Arguments to substitute into ``message``.
             stat_keys: Stat field names to increment (default: ``("failed_subsidiaries",)``).
@@ -409,11 +412,12 @@ class SubsidiaryPipeline(Pipeline):
                     (filing.cik, filing.accession_number),
                     FailureType.DOCUMENT_ERROR,
                     "error",
-                    "Document error for filing: %s - %s - %s: %s",
+                    "Document error for filing: %s - %s - %s: %s @ %s",
                     filing.cik,
                     filing.accession_number,
                     filing.filing_date,
                     e,
+                    exhibit_contents["url"],
                 )
 
             except ExtractionTimeoutError:
@@ -421,10 +425,11 @@ class SubsidiaryPipeline(Pipeline):
                     (filing.cik, filing.accession_number),
                     FailureType.TIMEOUT_ERROR,
                     "error",
-                    "Timeout extracting subsidiaries from filing: %s - %s - %s",
+                    "Timeout extracting subsidiaries from filing: %s - %s - %s @ %s",
                     filing.cik,
                     filing.accession_number,
                     filing.filing_date,
+                    exhibit_contents["url"],
                     stat_keys=("failed_subsidiaries", "timeout_subsidiaries"),
                 )
 
@@ -433,23 +438,26 @@ class SubsidiaryPipeline(Pipeline):
                     (filing.cik, filing.accession_number),
                     FailureType.TRUNCATED_ERROR,
                     "error",
-                    "Truncated extraction for filing: %s - %s - %s: %s",
+                    "Truncated extraction for filing: %s - %s - %s: %s @ %s",
                     filing.cik,
                     filing.accession_number,
                     filing.filing_date,
                     e,
+                    exhibit_contents["url"],
                     stat_keys=("failed_subsidiaries", "truncated_extractions"),
                 )
 
-            except Exception:
+            except Exception as e:
                 self._record_failure(
                     (filing.cik, filing.accession_number),
                     FailureType.EXTRACTION_FAILED,
-                    "error",
-                    "Error extracting subsidiaries from filing: %s - %s - %s",
+                    "exception",
+                    "Error extracting subsidiaries from filing: %s - %s - %s @ %s: %s",
                     filing.cik,
                     filing.accession_number,
                     filing.filing_date,
+                    exhibit_contents["url"],
+                    e,
                 )
 
             finally:

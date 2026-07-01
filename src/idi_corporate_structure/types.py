@@ -94,7 +94,6 @@ class Filing:
 class PipelineConfig:
     """Configuration for the subsidiary pipeline."""
 
-    input_file: str
     failure_file: str
     output_file: str
     start_date: datetime.date
@@ -107,8 +106,6 @@ class PipelineConfig:
 
     def __post_init__(self) -> None:
         """Validate existence of local files."""
-        if _is_local(self.input_file) and not pathlib.Path(self.input_file).exists():
-            raise FileNotFoundError(f"Input file not found: {self.input_file}")
         if _is_local(self.failure_file) and not pathlib.Path(self.failure_file).parent.exists():
             pathlib.Path(self.failure_file).parent.mkdir(parents=True, exist_ok=True)
         if _is_local(self.output_file) and not pathlib.Path(self.output_file).parent.exists():

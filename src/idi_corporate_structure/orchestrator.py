@@ -82,7 +82,6 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
 def get_args() -> argparse.Namespace:
     """Get command line arguments."""
     parser = argparse.ArgumentParser(description="Corporate Structure Pipeline Orchestrator")
-    parser.add_argument("--input-file", type=str, required=True, help="Input file path")
     parser.add_argument("--output-file", type=str, required=True, help="Output file path")
     parser.add_argument("--failure-file", type=str, required=True, help="Failure file path")
     parser.add_argument(
@@ -179,7 +178,6 @@ def main() -> None:
 
     logger.info("Searching for date range: %s - %s", start_date, end_date)
     config = PipelineConfig(
-        input_file=args.input_file,
         output_file=args.output_file,
         failure_file=args.failure_file,
         start_date=start_date,
